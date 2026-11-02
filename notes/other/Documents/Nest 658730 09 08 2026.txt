@@ -1,0 +1,1 @@
+[Nest] 658730  - 09/08/2026, 7:10:34 PM     LOG [RequestLoggerMiddleware] GET /api/v1/stock/opening/item-lookup?companyId=019c8ea6-19e9-78a8-b15f-749e1cde7292&branchId=019c8ea7-b0f5-72d5-96a5-1abfc80cc8ab&itemId=019da0a8-8eb9-706d-9619-d94e88b58d0b&uomId=019da0a8-8ee9-7167-b232-ebac93926a64&onDate=2026-09-08 404 - 9.8ms

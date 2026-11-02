@@ -1,0 +1,42 @@
+---
+name: txn-main-view-architecture
+description: "The one shared transaction list (TxnMainView) all voucher modules use — config-per-doc-type, TxnDocKey rows, text-derived status badges, Manage/Pick modes"
+metadata: 
+  node_type: memory
+  type: project
+  originSessionId: 157349d6-9695-4080-b9f5-4c70f2557c67
+  modified: 2026-07-30T11:29:59.960Z
+---
+
+Every transaction list in the app (quotation, sales, return, purchase, …) is ONE widget: `TxnMainView` (src/shared/ui/txn), a subclass of `NexCrudMasterPage`. Built 2026-07-30, replacing the legacy per-module `SalesMainView` pattern (/home/vk/Cladue/salesmainview.* is the reference the user supplied, plus vknex-sales-alter-picker.png for the visual target).
+
+**Descriptors, not subclasses.** One `TxnMainViewConfig` per document type, returned by a function in the single **`TxnDocTypes`** namespace (user-mandated name — NOT per-module names like SalesTxnDocTypes). The namespace is split across per-module files: `src/modules/sales/common/txn_doc_types_sales.h/.cpp` today, `txn_doc_types_purchase.*` etc. later — a C++ namespace is open, so callers always write `TxnDocTypes::quotation()`. These files are the ONLY place that knows which voucher screen/grid/status vocabulary belongs to which list.
+
+**Registration + the two navigation styles (user's legacy TXN_POPUP, kept 2026-07-30).** ONE menu id serves both styles; `FormManager::reg(menuId, factory)` takes a lambda, and the factory calls `TxnMainView::openForMenu(cfg, parent)`, which branches on `AppSession::txnEntryFirst()`:
+- `false` (default, = legacy TXN_POPUP false) → **list first**: menu opens TxnMainView, its F1 opens the voucher screen.
+- `true` → **entry first**: menu opens the voucher screen; its F8 reaches the same list in Pick mode.
+The flag is read **at open time, not registration** (improvement over legacy — no restart to switch), in exactly one place. `AppSession::txnEntryFirst()/setTxnEntryFirst()` added; like every other company flag in AppSession it has NO login parse yet (default false) — wire the company fetch to the setter. Live registration: `fm.reg(14, …openForMenu(TxnDocTypes::quotation()…))` in form_sales_menu.h, which no longer includes any voucher-screen header.
+
+**Voucher screens open in the MDI AREA, never as a popup** (user-required 2026-07-30). `TxnMainView::openEntryChild()` does what `FormManager::createSubWindow` does — `ctx.mdiArea->addSubWindow(entry, Qt::FramelessWindowHint)`, size copied from the list's own subwindow, `closeWindow → sub->close()`, `emit entry->ready()` after show — and deliberately does NOT set the `"menuId"` property (that tag is how FormManager finds the window a menu already opened; tagging the voucher would make the next menu click activate it instead of the list). Falls back to `entry->open()` only when `ctx.mdiArea` is null. Pickers (Pick mode) stay modal — that part is intentional.
+
+**Descriptors declare the voucher screen, not the handlers**: `createEntry` (`NexDialog*(QWidget*)`) + `loadIntoEntry` (`(NexDialog*, TxnDocKey, bool openForEdit)`). TxnMainView::deriveEntryHandlers() synthesizes onAdd/onEdit/onView from them (open as child, adopt ctx, refresh list on closeWindow) — an explicit handler still wins. Those same two fields are what let openForMenu() open the entry screen directly.
+
+**Two modes, one widget** (this is how the legacy screen worked via `DlgConstants.popupWindow`): `Manage` runs the config's handlers; `Pick` emits `picked(TxnDocKey, TxnPickAction::Alter|View|Delete)` and closes. `TxnMainView::openPicker(cfg, parent)` = modal picker. QuotationEntry's F8 "Show List" now uses this, so the entry screen owns no grid id and no popup code.
+
+**TxnDocKey is the row identity** (src/shared/ui/txn/txn_doc_key.h) — id + companyId + branchId + accYear (+ ref, status). User's requirement: the list SELECT returns all four on EVERY row, and actions use the ROW's tenant context, never AppSession, because voucher GET/save endpoints are keyed by tenant and an admin can list another company's/year's documents. The four fields need **no grid columns** — read from raw row JSON via the new `NexApiTableView::rowObject(row)`.
+
+**Status badges are text-derived** (`TxnBadgePalette`, src/shared/ui/txn): a doc type only names its badge columns (`c.badgeColumns = {"sq_status"}`), never colours, because vocabularies differ per module. styleFor() = normalise (upper, strip non-alphanumerics) → keyword→bucket (Danger/Locked/Warning/Progress/Success/Neutral, checked in THAT order so UNVERIFIED beats VERIFIED and PART PAID beats PAID) → unmatched text hashes to a stable hue. Both colours generated from one hue formula (HSL, fixed lightness 236/86) so contrast is structural. Danger dims+strikes the whole row, Locked dims. `registerAlias(word, bucket)` extends the vocabulary app-wide. Verified against both the quotation vocabulary and the PNG's (Editable / Narration only / IRN generated / GSTR-1 filed / Cancelled). `TxnRowDelegate` is installed on the WHOLE view (not one column) because the pill and the row treatment are one decision.
+
+**Row action policy**: `config.rowPolicy(row) -> {canEdit, canDelete, canPrint, reason}` gates the toolbar per selected row and prints `reason` in the hint bar. Quotation: CANCELLED/CONVERTED → no edit/delete, ACCEPTED → no delete.
+
+**Base-class hooks added to NexCrudMasterPage** (kept ONE list engine rather than a sibling class): `addWidgetBelowTable()`, `selectedRow()`, `setSearchPlaceholder()`, and four protected virtuals — `onRowSelected(row)`, `isActionAllowed(actionName, row)`, `onColumnsReady(int)`, `onEnterPressed()` (the last two were private slots). `updateActionButtons()` now consults isActionAllowed() after selection+permission checks.
+
+**Filters are DATA, not code** (2026-07-30): `TxnMainViewConfig::filters` is a `QList<TxnFilter>` — `{paramName, label, Kind (Text/Combo/Dropdown/Check/Date), options, dropdownId, defaultValue, reloadOnChange}`. TxnMainView builds the widget, wires it to the one reload path, and folds its value into the grid params, so a new filter on ANY transaction list is one entry in a `TxnDocTypes` descriptor and zero edits to shared code. Rules baked in: Combo's `options[0]` is the "no filter" entry (sends nothing); Check always sends `true`/`false` (false IS a filter); Date is sent even when BLANK because the SELECT's no-bound branch is `NULLIF(:p,'') IS NULL` and can only fire if the param arrives — same reason the fixed From/To are now always sent; an empty `paramName` = shown but not sent; filter values are applied BEFORE `buildExtraParams()` so a descriptor can still override one. `filtersSettled()` holds the 400 ms debounce only while a date is HALF-TYPED — empty is settled, which is what makes clearing a date reload (it previously required both dates valid, so clearing one froze the list).
+
+**Fixed by design** (user's ask): From/To dates always present (period presets — Today…This year — only WRITE into them, they stay the truth), search always present, legacy function keys kept exactly: F1 add, F2 edit, F3 delete, F5 refresh, F6 print, F7 print-in-format, Enter=edit/pick, Ctrl+Enter=view. Prints are a LIST (`QList<TxnPrintAction>`), not two hard-coded buttons. Keyboard reaches the grid through `m_search->installEventFilter(m_table)` — the grid is NoFocus and the search box forwards ↑↓/Enter/PgUp/PgDn.
+
+**Deliberately NOT built**: the item-list preview pane under the grid (user: "no need to show item list when txn focussed"). Don't re-propose it.
+
+**Quotation list grid is 83** (user-confirmed 2026-07-30). Its SELECT + the grid-column rows to seed are in `db/quotation_list_grid.sql` — and that file's key rule: **DO NOT ALIAS the columns**, because the alias becomes the row's JSON key and the client looks up `sq_status` (badge) and the four TxnDocKey fields by their snake_case names; headings belong in the grid master. Params it binds: `:search :icompany_id :ibranch_id :iacc_year :ifrom_date :ito_date` (+ `:iuser_id` sent but unused unless the own-documents-only variant is enabled). rowPolicy judges `sq_converted_doc_id`/`sq_cancelled_on` columns BEFORE the status text (a FK can't be renamed).
+
+**Backend still open**: grid-83 column rows have to be seeded (the SQL file lists exactly which, with data types — `sq_status` stays Text, the delegate makes it a badge), and printing has no pipeline anywhere in the app yet, so both print routes show "not available yet" from one place. See [[charge-distribution-model]] for the quotation load/save round-trip these actions drive.

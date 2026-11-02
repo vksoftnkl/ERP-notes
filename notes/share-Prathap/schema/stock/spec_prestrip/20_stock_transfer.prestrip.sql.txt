@@ -1,0 +1,636 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+--  NexERP backend — 20: STOCK TRANSFERS
+--
+--      stock.fn_svh_post_transfer      TRANSFER_OUT → ledger (+ transit)
+--      stock.fn_svh_receive_transfer   TRANSFER_IN  → ledger + transit close
+--      stock.fn_svh_transfer_cancel_guard   what cancel may NOT do here
+--
+--  Requires PostgreSQL 18+.  Run order: … → stock/16 → … → stock/19 → stock/20.
+--  Re-runnable: every object is CREATE OR REPLACE / IF NOT EXISTS.
+--
+--  ── Why this file exists ─────────────────────────────────────────────────
+--  fn_svh_post (19) refuses TRANSFER_* by name, because a transfer is not
+--  one document's worth of ledger rows — posting half a pair is worse than
+--  refusing the whole thing. Everything ELSE was already built in 16:
+--  stock_voucher knows the types and the link constraint, stock_transit
+--  carries the between-branches state, fn_stt_refresh rolls it into
+--  sbl_transit_in_qty, and stt_short_qty is the loss report. This file adds
+--  only the two functions that drive them.
+--
+--  ── The two shapes ───────────────────────────────────────────────────────
+--  SAME BRANCH (godown → godown; svh_to_branch_id NULL or = svh_branch_id):
+--      no transit — the goods cross the yard. One TRANSFER_OUT voucher,
+--      fn_svh_post_transfer writes the OUT and IN ledger rows as a PAIR in
+--      one transaction, voucher goes straight to POSTED. Most of the daily
+--      volume, and cancellable like any posted document (the generic
+--      fn_svh_cancel reverses both halves symmetrically).
+--
+--  BRANCH → BRANCH:
+--      fn_svh_post_transfer writes the OUT rows and one stock_transit row
+--      per line, voucher → IN_TRANSIT. The stock is out of A and not yet in
+--      B, and B sees it coming in sbl_transit_in_qty. The receiving branch
+--      raises a TRANSFER_IN voucher linked through svh_link_*
+--      (ck_svh_transfer_in_link already enforces the link), keys what
+--      actually arrived, and fn_svh_receive_transfer posts the IN rows,
+--      settles the transit rows, and flips the OUT to RECEIVED when nothing
+--      is left in transit. Partial receipts are just more TRANSFER_IN
+--      vouchers against the same OUT.
+--
+--  ── Three rules both functions keep ──────────────────────────────────────
+--    * COST TRAVELS WITH THE STOCK. The OUT row's cost is stamped by
+--      fn_sml_cost_default from the item's valuation policy; the IN row and
+--      the transit row carry exactly that figure. A transfer never revalues
+--      and the destination never re-enters a cost.
+--    * THE LOT SURVIVES THE MOVE. Lots are company-wide, so the destination
+--      reuses the same slt_id — a transfer must name the lot it moves
+--      (svi_lot_id NOT NULL here; the screen picks from stock, like a
+--      count). fn_slt_resolve is never called: a transfer moves identity,
+--      it does not create it. Ageing does not reset — that is the point.
+--    * IDEMPOTENCY IS ux_sml_source'S. OUT and IN rows of one line differ in
+--      direction and godown, so the pair fits the unique key, and a retry
+--      after a timeout cannot move stock twice.
+--
+--  ── Damage and short, at receipt ─────────────────────────────────────────
+--  A receive line's svi_bucket says what the goods ARRIVE as. Units that
+--  arrive broken are a line with svi_bucket = 'DAMAGED': they post into the
+--  DAMAGED bucket at the destination (they physically exist, broken) and
+--  count into stt_damage_qty. Units that never arrive are simply never
+--  received: stt_short_qty (generated) keeps saying so, the transit row
+--  stays PARTIAL, and the transfer-loss report (Q14) is built on exactly
+--  that. Writing the short off is a business decision — a DAMAGE/ADJUSTMENT
+--  voucher at whichever branch the business blames — and is deliberately not
+--  automated here.
+--
+--  ── What is deliberately NOT here ────────────────────────────────────────
+--    * REPACK_IN / REPACK_OUT — still refused by name; a repack is a
+--      different animal (one lot becomes another).
+--    * Cancelling an inter-branch transfer mid-flight. An IN_TRANSIT OUT is
+--      not POSTED, so fn_svh_cancel already refuses it; the goods are on a
+--      lorry and the paper must wait for the physical world. Receive what
+--      arrives, then transfer back.
+--    * Un-receiving. Cancelling a POSTED TRANSFER_IN would reverse its
+--      ledger rows while the transit row still says received — a silent
+--      fork. The guard below refuses it: un-receiving is a REVERSE
+--      TRANSFER, raised as a new document, not a cancellation.
+--    * Multi-bucket shipments of one lot to one godown on one OUT voucher.
+--      The receive matcher requires one transit row per (item, lot,
+--      destination); ship saleable and damaged stock as two OUT vouchers.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+
+-- ───────────────────────────────────────────────────────────────────────────
+--  §1  fn_svh_post_transfer — post a TRANSFER_OUT voucher.
+--
+--  Returns the number of LEDGER rows written (2 × lines for a same-branch
+--  pair, 1 × lines for an inter-branch despatch).
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION stock.fn_svh_post_transfer(
+    p_voucher_id uuid,
+    p_acc_year   character(9),
+    p_posted_by  uuid DEFAULT NULL)
+RETURNS integer
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v            record;
+    ln           record;
+    lot          record;
+    v_same       boolean;
+    v_base       numeric(18,6);
+    v_free_base  numeric(18,6);
+    v_total      numeric(18,6);
+    v_rate       numeric(18,6);
+    v_rate_wot   numeric(18,6);
+    v_lines      integer := 0;
+    v_rows       integer := 0;
+BEGIN
+    SELECT * INTO v
+      FROM stock.stock_voucher
+     WHERE svh_id = p_voucher_id AND svh_acc_year = p_acc_year
+       FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'stock voucher % / % not found', p_voucher_id, p_acc_year
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v.svh_is_deleted THEN
+        RAISE EXCEPTION 'voucher % is deleted', v.svh_refno
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF v.svh_voucher_type <> 'TRANSFER_OUT' THEN
+        RAISE EXCEPTION
+            'voucher % is a %; fn_svh_post_transfer posts TRANSFER_OUT only%',
+            v.svh_refno, v.svh_voucher_type,
+            CASE WHEN v.svh_voucher_type = 'TRANSFER_IN'
+                 THEN ' — receive it with fn_svh_receive_transfer' ELSE '' END
+            USING ERRCODE = 'feature_not_supported';
+    END IF;
+    IF v.svh_status <> 'DRAFT' THEN
+        RAISE EXCEPTION
+            'voucher % is %; only a DRAFT transfer can be despatched',
+            v.svh_refno, v.svh_status
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+
+    v_same := v.svh_to_branch_id IS NULL OR v.svh_to_branch_id = v.svh_branch_id;
+
+    IF v_same AND v.svh_from_godown_id = v.svh_to_godown_id THEN
+        RAISE EXCEPTION
+            'voucher % transfers a godown to itself', v.svh_refno
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    FOR ln IN
+        SELECT *
+          FROM stock.stock_voucher_item
+         WHERE svi_voucher_id = p_voucher_id
+           AND svi_acc_year   = p_acc_year
+           AND svi_is_deleted = false
+         ORDER BY svi_line_no, svi_split_no
+    LOOP
+        v_lines := v_lines + 1;
+
+        -- A transfer moves EXISTING stock: the screen picks the holding from
+        -- the balance (like a count sheet), so the lot is already known.
+        IF ln.svi_lot_id IS NULL THEN
+            RAISE EXCEPTION
+                'line %/% of voucher % names no lot — a transfer moves existing stock; pick it from the balance',
+                ln.svi_line_no, ln.svi_split_no, v.svh_refno
+                USING ERRCODE = 'not_null_violation';
+        END IF;
+        IF ln.svi_godown_id = v.svh_to_godown_id THEN
+            RAISE EXCEPTION
+                'line %/% of voucher % moves stock from the destination godown to itself',
+                ln.svi_line_no, ln.svi_split_no, v.svh_refno
+                USING ERRCODE = 'check_violation';
+        END IF;
+
+        v_base      := ln.svi_base_qty;
+        v_free_base := ln.svi_free_base_qty;
+        IF v_base = 0 AND ln.svi_qty <> 0 THEN
+            v_base := ln.svi_qty * ln.svi_to_base_factor;
+        END IF;
+        IF v_free_base = 0 AND ln.svi_free_qty <> 0 THEN
+            v_free_base := ln.svi_free_qty * ln.svi_to_base_factor;
+        END IF;
+        v_total := v_base + v_free_base;
+        IF v_total <= 0 THEN
+            RAISE EXCEPTION 'line %/% of voucher % has no quantity',
+                ln.svi_line_no, ln.svi_split_no, v.svh_refno
+                USING ERRCODE = 'check_violation';
+        END IF;
+
+        SELECT slt_mrp, slt_batch_no, slt_expiry_date, slt_cost_rate_wot
+          INTO lot
+          FROM stock.stock_lot WHERE slt_id = ln.svi_lot_id;
+
+        -- ── The OUT row. Cost left as the line gave it (usually 0):
+        -- fn_sml_cost_default stamps the policy cost BEFORE INSERT, and
+        -- RETURNING hands back what was actually written, so the IN row and
+        -- the transit row carry the SAME figure.
+        INSERT INTO stock.stock_ledger (
+            sml_company_id, sml_branch_id, sml_tenant_id, sml_acc_year,
+            sml_godown_id, sml_item_id, sml_lot_id, sml_uom_id,
+            sml_base_uom_id, sml_to_base_factor,
+            sml_src_module, sml_src_doc_type, sml_src_doc_id,
+            sml_src_acc_year, sml_src_refno, sml_line_no, sml_split_no,
+            sml_txn_type, sml_direction, sml_bucket,
+            sml_doc_date, sml_doc_datetime,
+            sml_qty, sml_base_qty, sml_free_qty, sml_free_base_qty,
+            sml_weight_qty,
+            sml_cost_rate, sml_cost_rate_wot,
+            sml_mrp, sml_batch_no, sml_expiry_date,
+            sml_reason_id, sml_narration, sml_created_by)
+        VALUES (
+            v.svh_company_id, v.svh_branch_id, v.svh_tenant_id, p_acc_year,
+            ln.svi_godown_id, ln.svi_item_id, ln.svi_lot_id, ln.svi_uom_id,
+            ln.svi_base_uom_id, ln.svi_to_base_factor,
+            'STOCK', 'STOCK_VOUCHER', v.svh_id,
+            v.svh_acc_year, v.svh_refno, ln.svi_line_no, ln.svi_split_no,
+            'TRANSFER_OUT', -1, ln.svi_bucket,
+            v.svh_doc_date, v.svh_doc_datetime,
+            ln.svi_qty, v_base, ln.svi_free_qty, v_free_base,
+            ln.svi_weight_qty,
+            COALESCE(ln.svi_cost_rate, 0), COALESCE(ln.svi_cost_rate_wot, 0),
+            lot.slt_mrp, lot.slt_batch_no, lot.slt_expiry_date,
+            COALESCE(ln.svi_reason_id, v.svh_reason_id), ln.svi_remarks,
+            COALESCE(p_posted_by, v.svh_created_by))
+        RETURNING sml_cost_rate, sml_cost_rate_wot INTO v_rate, v_rate_wot;
+
+        v_rows := v_rows + 1;
+
+        -- The document shows what the ledger received. Still DRAFT, so
+        -- tr_svi_post_lock allows it.
+        UPDATE stock.stock_voucher_item
+           SET svi_base_qty      = v_base,
+               svi_free_base_qty = v_free_base,
+               svi_cost_rate     = v_rate,
+               svi_cost_rate_wot = v_rate_wot,
+               svi_modified_on   = now(),
+               svi_modified_by   = p_posted_by
+         WHERE svi_id = ln.svi_id AND svi_acc_year = ln.svi_acc_year;
+
+        IF v_same THEN
+            -- ── The IN half of the pair, in the same transaction. Explicit
+            -- cost, so fn_sml_cost_default leaves it alone (inward anyway).
+            INSERT INTO stock.stock_ledger (
+                sml_company_id, sml_branch_id, sml_tenant_id, sml_acc_year,
+                sml_godown_id, sml_item_id, sml_lot_id, sml_uom_id,
+                sml_base_uom_id, sml_to_base_factor,
+                sml_src_module, sml_src_doc_type, sml_src_doc_id,
+                sml_src_acc_year, sml_src_refno, sml_line_no, sml_split_no,
+                sml_txn_type, sml_direction, sml_bucket,
+                sml_doc_date, sml_doc_datetime,
+                sml_qty, sml_base_qty, sml_free_qty, sml_free_base_qty,
+                sml_weight_qty,
+                sml_cost_rate, sml_cost_value,
+                sml_cost_rate_wot, sml_cost_value_wot,
+                sml_mrp, sml_batch_no, sml_expiry_date,
+                sml_reason_id, sml_narration, sml_created_by)
+            VALUES (
+                v.svh_company_id, v.svh_branch_id, v.svh_tenant_id, p_acc_year,
+                v.svh_to_godown_id, ln.svi_item_id, ln.svi_lot_id, ln.svi_uom_id,
+                ln.svi_base_uom_id, ln.svi_to_base_factor,
+                'STOCK', 'STOCK_VOUCHER', v.svh_id,
+                v.svh_acc_year, v.svh_refno, ln.svi_line_no, ln.svi_split_no,
+                'TRANSFER_IN', 1, ln.svi_bucket,
+                v.svh_doc_date, v.svh_doc_datetime,
+                ln.svi_qty, v_base, ln.svi_free_qty, v_free_base,
+                ln.svi_weight_qty,
+                v_rate,     ROUND(v_total * v_rate, 2),
+                v_rate_wot, ROUND(v_total * v_rate_wot, 2),
+                lot.slt_mrp, lot.slt_batch_no, lot.slt_expiry_date,
+                COALESCE(ln.svi_reason_id, v.svh_reason_id), ln.svi_remarks,
+                COALESCE(p_posted_by, v.svh_created_by));
+            v_rows := v_rows + 1;
+        ELSE
+            -- ── On the lorry. fn_stt_refresh shows it inbound at B, and the
+            -- ensure-row fix means B sees it even for an item it never held.
+            INSERT INTO stock.stock_transit (
+                stt_company_id, stt_tenant_id,
+                stt_from_branch_id, stt_from_godown_id,
+                stt_to_branch_id, stt_to_godown_id,
+                stt_item_id, stt_lot_id, stt_base_uom_id, stt_bucket,
+                stt_out_voucher_id, stt_out_acc_year, stt_out_refno,
+                stt_sent_qty, stt_cost_rate, stt_transit_value,
+                stt_created_by)
+            VALUES (
+                v.svh_company_id, v.svh_tenant_id,
+                v.svh_branch_id, ln.svi_godown_id,
+                v.svh_to_branch_id, v.svh_to_godown_id,
+                ln.svi_item_id, ln.svi_lot_id, ln.svi_base_uom_id, ln.svi_bucket,
+                v.svh_id, v.svh_acc_year, v.svh_refno,
+                v_total, v_rate, ROUND(v_total * v_rate, 2),
+                COALESCE(p_posted_by, v.svh_created_by));
+        END IF;
+    END LOOP;
+
+    IF v_lines = 0 THEN
+        RAISE EXCEPTION 'voucher % has no lines to post', v.svh_refno
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    PERFORM stock.fn_svh_recompute(p_voucher_id, p_acc_year);
+
+    UPDATE stock.stock_voucher
+       SET svh_status      = CASE WHEN v_same THEN 'POSTED' ELSE 'IN_TRANSIT' END,
+           svh_posted_on   = now(),
+           svh_posted_by   = p_posted_by,
+           svh_modified_on = now(),
+           svh_modified_by = p_posted_by
+     WHERE svh_id = p_voucher_id AND svh_acc_year = p_acc_year;
+
+    RETURN v_rows;
+END $$;
+
+ALTER FUNCTION stock.fn_svh_post_transfer(uuid, character(9), uuid) OWNER to postgres;
+
+
+-- ───────────────────────────────────────────────────────────────────────────
+--  §2  fn_svh_receive_transfer — post a TRANSFER_IN voucher against its OUT.
+--
+--  Returns the number of ledger rows written. Partial receipts are more
+--  TRANSFER_IN vouchers against the same OUT; the OUT flips to RECEIVED
+--  only when nothing is left in transit.
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION stock.fn_svh_receive_transfer(
+    p_voucher_id  uuid,
+    p_acc_year    character(9),
+    p_received_by uuid DEFAULT NULL)
+RETURNS integer
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v           record;
+    o           record;
+    ln          record;
+    t           record;
+    lot         record;
+    v_n         integer;
+    v_base      numeric(18,6);
+    v_free_base numeric(18,6);
+    v_total     numeric(18,6);
+    v_good      numeric(18,6);
+    v_dmg       numeric(18,6);
+    v_remaining numeric(18,6);
+    v_lines     integer := 0;
+    v_rows      integer := 0;
+BEGIN
+    SELECT * INTO v
+      FROM stock.stock_voucher
+     WHERE svh_id = p_voucher_id AND svh_acc_year = p_acc_year
+       FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'stock voucher % / % not found', p_voucher_id, p_acc_year
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v.svh_is_deleted THEN
+        RAISE EXCEPTION 'voucher % is deleted', v.svh_refno
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF v.svh_voucher_type <> 'TRANSFER_IN' THEN
+        RAISE EXCEPTION
+            'voucher % is a %; fn_svh_receive_transfer posts TRANSFER_IN only',
+            v.svh_refno, v.svh_voucher_type
+            USING ERRCODE = 'feature_not_supported';
+    END IF;
+    IF v.svh_status <> 'DRAFT' THEN
+        RAISE EXCEPTION
+            'voucher % is %; only a DRAFT receipt can be posted',
+            v.svh_refno, v.svh_status
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF v.svh_link_src_module <> 'STOCK'
+       OR v.svh_link_src_doc_type <> 'STOCK_VOUCHER' THEN
+        RAISE EXCEPTION
+            'voucher % must link a stock TRANSFER_OUT through svh_link_*',
+            v.svh_refno
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- Lock the OUT for the whole receipt, so two clerks receiving the same
+    -- lorry serialise instead of double-settling the transit rows.
+    SELECT * INTO o
+      FROM stock.stock_voucher
+     WHERE svh_id       = v.svh_link_src_doc_id
+       AND svh_acc_year = COALESCE(v.svh_link_src_acc_year, p_acc_year)
+       FOR UPDATE;
+
+    IF NOT FOUND OR o.svh_voucher_type <> 'TRANSFER_OUT' THEN
+        RAISE EXCEPTION
+            'voucher % does not link a TRANSFER_OUT', v.svh_refno
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF o.svh_status <> 'IN_TRANSIT' THEN
+        RAISE EXCEPTION
+            'transfer % is %; only an IN_TRANSIT transfer can be received',
+            o.svh_refno, o.svh_status
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF v.svh_branch_id IS DISTINCT FROM o.svh_to_branch_id THEN
+        RAISE EXCEPTION
+            'transfer % was sent to another branch, not this one', o.svh_refno
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    FOR ln IN
+        SELECT *
+          FROM stock.stock_voucher_item
+         WHERE svi_voucher_id = p_voucher_id
+           AND svi_acc_year   = p_acc_year
+           AND svi_is_deleted = false
+         ORDER BY svi_line_no, svi_split_no
+    LOOP
+        v_lines := v_lines + 1;
+
+        IF ln.svi_lot_id IS NULL THEN
+            RAISE EXCEPTION
+                'line %/% of voucher % names no lot', ln.svi_line_no,
+                ln.svi_split_no, v.svh_refno
+                USING ERRCODE = 'not_null_violation';
+        END IF;
+
+        v_base      := ln.svi_base_qty;
+        v_free_base := ln.svi_free_base_qty;
+        IF v_base = 0 AND ln.svi_qty <> 0 THEN
+            v_base := ln.svi_qty * ln.svi_to_base_factor;
+        END IF;
+        IF v_free_base = 0 AND ln.svi_free_qty <> 0 THEN
+            v_free_base := ln.svi_free_qty * ln.svi_to_base_factor;
+        END IF;
+        v_total := v_base + v_free_base;
+        IF v_total <= 0 THEN
+            RAISE EXCEPTION 'line %/% of voucher % has no quantity',
+                ln.svi_line_no, ln.svi_split_no, v.svh_refno
+                USING ERRCODE = 'check_violation';
+        END IF;
+
+        -- ── The transit row this line settles. One per (item, lot,
+        -- destination godown) by contract — see the header.
+        SELECT count(*) INTO v_n
+          FROM stock.stock_transit
+         WHERE stt_out_voucher_id = o.svh_id
+           AND stt_out_acc_year   = o.svh_acc_year
+           AND stt_item_id        = ln.svi_item_id
+           AND stt_lot_id         = ln.svi_lot_id
+           AND stt_to_godown_id   = ln.svi_godown_id
+           AND stt_is_deleted     = false;
+        IF v_n = 0 THEN
+            RAISE EXCEPTION
+                'line %/% of voucher %: nothing of this lot is in transit to this godown from %',
+                ln.svi_line_no, ln.svi_split_no, v.svh_refno, o.svh_refno
+                USING ERRCODE = 'no_data_found';
+        ELSIF v_n > 1 THEN
+            RAISE EXCEPTION
+                'line %/% of voucher %: % was shipped in more than one bucket; receive per bucket is not supported — ship as separate transfers',
+                ln.svi_line_no, ln.svi_split_no, v.svh_refno, o.svh_refno
+                USING ERRCODE = 'feature_not_supported';
+        END IF;
+
+        SELECT * INTO t
+          FROM stock.stock_transit
+         WHERE stt_out_voucher_id = o.svh_id
+           AND stt_out_acc_year   = o.svh_acc_year
+           AND stt_item_id        = ln.svi_item_id
+           AND stt_lot_id         = ln.svi_lot_id
+           AND stt_to_godown_id   = ln.svi_godown_id
+           AND stt_is_deleted     = false
+           FOR UPDATE;
+
+        v_remaining := t.stt_sent_qty - t.stt_received_qty - t.stt_damage_qty;
+        IF v_total > v_remaining THEN
+            RAISE EXCEPTION
+                'line %/% of voucher % receives % but only % of this lot is still in transit',
+                ln.svi_line_no, ln.svi_split_no, v.svh_refno, v_total, v_remaining
+                USING ERRCODE = 'check_violation';
+        END IF;
+
+        -- Arrived broken = a DAMAGED-bucket line on a shipment that was not
+        -- itself damaged stock. It still posts IN (the units exist), into
+        -- the DAMAGED bucket, and counts as transit damage.
+        IF ln.svi_bucket = 'DAMAGED' AND t.stt_bucket <> 'DAMAGED' THEN
+            v_good := 0;        v_dmg := v_total;
+        ELSE
+            v_good := v_total;  v_dmg := 0;
+        END IF;
+
+        SELECT slt_mrp, slt_batch_no, slt_expiry_date, slt_cost_rate_wot
+          INTO lot
+          FROM stock.stock_lot WHERE slt_id = ln.svi_lot_id;
+
+        -- ── The IN row, at the cost the stock LEFT with. Never re-entered.
+        INSERT INTO stock.stock_ledger (
+            sml_company_id, sml_branch_id, sml_tenant_id, sml_acc_year,
+            sml_godown_id, sml_item_id, sml_lot_id, sml_uom_id,
+            sml_base_uom_id, sml_to_base_factor,
+            sml_src_module, sml_src_doc_type, sml_src_doc_id,
+            sml_src_acc_year, sml_src_refno, sml_line_no, sml_split_no,
+            sml_txn_type, sml_direction, sml_bucket,
+            sml_doc_date, sml_doc_datetime,
+            sml_qty, sml_base_qty, sml_free_qty, sml_free_base_qty,
+            sml_weight_qty,
+            sml_cost_rate, sml_cost_value,
+            sml_cost_rate_wot, sml_cost_value_wot,
+            sml_mrp, sml_batch_no, sml_expiry_date,
+            sml_reason_id, sml_narration, sml_created_by)
+        VALUES (
+            v.svh_company_id, v.svh_branch_id, v.svh_tenant_id, p_acc_year,
+            ln.svi_godown_id, ln.svi_item_id, ln.svi_lot_id, ln.svi_uom_id,
+            ln.svi_base_uom_id, ln.svi_to_base_factor,
+            'STOCK', 'STOCK_VOUCHER', v.svh_id,
+            v.svh_acc_year, v.svh_refno, ln.svi_line_no, ln.svi_split_no,
+            'TRANSFER_IN', 1, ln.svi_bucket,
+            v.svh_doc_date, v.svh_doc_datetime,
+            ln.svi_qty, v_base, ln.svi_free_qty, v_free_base,
+            ln.svi_weight_qty,
+            t.stt_cost_rate,     ROUND(v_total * t.stt_cost_rate, 2),
+            lot.slt_cost_rate_wot, ROUND(v_total * lot.slt_cost_rate_wot, 2),
+            lot.slt_mrp, lot.slt_batch_no, lot.slt_expiry_date,
+            COALESCE(ln.svi_reason_id, v.svh_reason_id), ln.svi_remarks,
+            COALESCE(p_received_by, v.svh_created_by));
+
+        v_rows := v_rows + 1;
+
+        UPDATE stock.stock_voucher_item
+           SET svi_base_qty      = v_base,
+               svi_free_base_qty = v_free_base,
+               svi_cost_rate     = t.stt_cost_rate,
+               svi_cost_rate_wot = lot.slt_cost_rate_wot,
+               svi_modified_on   = now(),
+               svi_modified_by   = p_received_by
+         WHERE svi_id = ln.svi_id AND svi_acc_year = ln.svi_acc_year;
+
+        -- ── Settle the transit. fn_stt_refresh re-sums sbl_transit_in_qty.
+        UPDATE stock.stock_transit
+           SET stt_received_qty = stt_received_qty + v_good,
+               stt_damage_qty   = stt_damage_qty   + v_dmg,
+               stt_in_voucher_id = v.svh_id,
+               stt_in_acc_year   = v.svh_acc_year,
+               stt_in_refno      = v.svh_refno,
+               stt_received_on   = now(),
+               stt_status = CASE
+                   WHEN stt_sent_qty - (stt_received_qty + v_good)
+                                     - (stt_damage_qty + v_dmg) <= 0
+                   THEN 'RECEIVED' ELSE 'PARTIAL' END,
+               stt_modified_on = now(),
+               stt_modified_by = p_received_by
+         WHERE stt_id = t.stt_id;
+    END LOOP;
+
+    IF v_lines = 0 THEN
+        RAISE EXCEPTION 'voucher % has no lines to post', v.svh_refno
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    PERFORM stock.fn_svh_recompute(p_voucher_id, p_acc_year);
+
+    UPDATE stock.stock_voucher
+       SET svh_status      = 'POSTED',
+           svh_posted_on   = now(),
+           svh_posted_by   = p_received_by,
+           svh_modified_on = now(),
+           svh_modified_by = p_received_by
+     WHERE svh_id = p_voucher_id AND svh_acc_year = p_acc_year;
+
+    -- The OUT closes only when NOTHING of it is left in transit. A short
+    -- (never received, never damaged) keeps its transit row open and the
+    -- OUT IN_TRANSIT — which is what puts it on the loss report until the
+    -- business decides whose write-off it is.
+    IF NOT EXISTS (
+          SELECT 1
+            FROM stock.stock_transit
+           WHERE stt_out_voucher_id = o.svh_id
+             AND stt_out_acc_year   = o.svh_acc_year
+             AND stt_is_deleted     = false
+             AND stt_sent_qty - stt_received_qty - stt_damage_qty > 0)
+    THEN
+        UPDATE stock.stock_voucher
+           SET svh_status      = 'RECEIVED',
+               svh_modified_on = now(),
+               svh_modified_by = p_received_by
+         WHERE svh_id = o.svh_id AND svh_acc_year = o.svh_acc_year;
+    END IF;
+
+    RETURN v_rows;
+END $$;
+
+ALTER FUNCTION stock.fn_svh_receive_transfer(uuid, character(9), uuid) OWNER to postgres;
+
+
+-- ───────────────────────────────────────────────────────────────────────────
+--  §3  What cancel may NOT do to a transfer.
+--
+--  Same-branch transfers reach POSTED and cancel like anything else: the
+--  generic fn_svh_cancel reverses the OUT and IN rows symmetrically. An
+--  inter-branch OUT is never POSTED (IN_TRANSIT → RECEIVED), so cancel
+--  already refuses it. The one hole left is a POSTED TRANSFER_IN: cancelling
+--  it would reverse the IN rows while the transit row still says received —
+--  a silent fork between the ledger and the transit table. Refused here:
+--  un-receiving is a reverse transfer, raised as a new document.
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION stock.fn_svh_transfer_cancel_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.svh_status = 'CANCELLED' AND OLD.svh_status <> 'CANCELLED' THEN
+        IF OLD.svh_voucher_type = 'TRANSFER_IN'
+           AND OLD.svh_link_src_doc_id IS NOT NULL THEN
+            RAISE EXCEPTION
+                'voucher % received a transfer; un-receiving is a reverse transfer back to the sender, not a cancellation',
+                OLD.svh_refno
+                USING ERRCODE = 'restrict_violation';
+        END IF;
+        IF OLD.svh_voucher_type = 'TRANSFER_OUT'
+           AND OLD.svh_status IN ('IN_TRANSIT', 'RECEIVED') THEN
+            RAISE EXCEPTION
+                'transfer % is %; goods that left cannot be cancelled on paper — receive them, or transfer them back',
+                OLD.svh_refno, OLD.svh_status
+                USING ERRCODE = 'restrict_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+
+ALTER FUNCTION stock.fn_svh_transfer_cancel_guard() OWNER to postgres;
+
+DROP TRIGGER IF EXISTS tr_svh_transfer_cancel_guard ON stock.stock_voucher;
+CREATE TRIGGER tr_svh_transfer_cancel_guard
+    BEFORE UPDATE ON stock.stock_voucher
+    FOR EACH ROW
+    WHEN (NEW.svh_status = 'CANCELLED')
+    EXECUTE FUNCTION stock.fn_svh_transfer_cancel_guard();
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §4  Catalog comments.
+-- ═══════════════════════════════════════════════════════════════════════════
+COMMENT ON FUNCTION stock.fn_svh_post_transfer(uuid, character(9), uuid) IS
+    'Despatches a DRAFT TRANSFER_OUT voucher. Same branch: writes the TRANSFER_OUT + TRANSFER_IN ledger pairs in one transaction and the voucher is POSTED — no transit, the goods crossed the yard. Another branch: writes the OUT rows and one stock_transit row per line, voucher IN_TRANSIT. Cost is stamped once on the OUT row (policy via fn_sml_cost_default) and travels with the stock; the lot is required and reused, never re-resolved, so ageing survives the move. Returns ledger rows written.';
+
+COMMENT ON FUNCTION stock.fn_svh_receive_transfer(uuid, character(9), uuid) IS
+    'Posts a DRAFT TRANSFER_IN voucher against its linked IN_TRANSIT TRANSFER_OUT: IN ledger rows at the cost the stock left with (a DAMAGED-bucket line posts into the DAMAGED bucket and counts as transit damage), settles the transit rows (RECEIVED / PARTIAL), and flips the OUT to RECEIVED when nothing is left in transit. Partial receipts are more TRANSFER_IN vouchers against the same OUT. What never arrives stays open in transit — stt_short_qty is the loss report — until the business raises whichever write-off it decides on.';
+
+COMMENT ON FUNCTION stock.fn_svh_transfer_cancel_guard() IS
+    'Refuses cancelling a POSTED TRANSFER_IN (the transit row would still say received while the ledger said otherwise — un-receiving is a reverse transfer, raised as a new document) and any paper cancellation of an IN_TRANSIT / RECEIVED TRANSFER_OUT. Same-branch transfers are POSTED pairs and cancel normally.';

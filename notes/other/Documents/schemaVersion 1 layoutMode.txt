@@ -1,0 +1,980 @@
+{
+  "schemaVersion": 1,
+  "layoutMode": "GRAPHIC",
+  "meta": {
+    "name": "QUOTATIONA5 (copy)",
+    "note": "A5 portrait quotation. Content column x=5..143mm (138mm wide). Columns: # 5(7) | Desc 12(18) | Size 30(26) | Qty 56(14) | UOM 70(9) | Rate 79(24) | Disc 103(16) | Amount 119(24). Money fields use Indian lakh grouping mask ##,##,##0.00; qty uses 0.00 (ungrouped). FOOTER TOTALS BLOCK: every line -- Gross Amount, the charges crosstab, Round Off, Grand Total -- shares one label column (x89 w32, left) and one amount column (x123 w20, right, edge on 143), because the crosstab pads its cells by 1mm and hardcodes label=left / value=right. Its geometry follows from x=88, w=56, rowHeaderWidthMm=34; changing any of those three breaks the alignment. The crosstab's y=1.48 is 3.4 - 3.1231 (its blank 6.5pt bold header row), which puts the first charge on 4.6 and keeps the 3.4mm pitch; changing the crosstab FONT changes that header height and shifts the rows.",
+    "gridSnapMm": 0.5
+  },
+  "paper": {
+    "code": "A5",
+    "widthMm": 148,
+    "heightMm": 210,
+    "orientation": "PORTRAIT",
+    "margins": {
+      "top": 1,
+      "right": 1,
+      "bottom": 1,
+      "left": 1
+    }
+  },
+  "datasets": [
+    {
+      "name": "header",
+      "provider": "sql.header",
+      "cardinality": "one"
+    },
+    {
+      "name": "items",
+      "provider": "sql.items",
+      "cardinality": "many"
+    },
+    {
+      "name": "taxes",
+      "provider": "sql.taxes",
+      "cardinality": "many"
+    },
+    {
+      "name": "charges",
+      "provider": "sql.charges",
+      "cardinality": "many"
+    }
+  ],
+  "bands": [
+    {
+      "type": "PAGE_HEADER",
+      "heightMm": 56.01,
+      "groupLevel": 0,
+      "printOn": "ALL_PAGES",
+      "autoGrow": false,
+      "keepTogether": true,
+      "keepWithNext": false,
+      "keepWithLastDetail": false,
+      "spacingRows": 0,
+      "elements": [
+        {
+          "kind": "TEXT",
+          "id": "rh_company",
+          "x": 5,
+          "y": 0,
+          "w": 138,
+          "h": 5.6,
+          "align": "center",
+          "font": {
+            "size": 12,
+            "bold": true
+          },
+          "value": "{{ header.company_name }}"
+        },
+        {
+          "kind": "TEXT",
+          "id": "rh_addr1",
+          "x": 5,
+          "y": 5.6,
+          "w": 138,
+          "h": 3.4,
+          "align": "center",
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{ header.company_addr1|coalesce('') }} {{ header.company_addr2|coalesce('') }}",
+          "ellipsis": true
+        },
+        {
+          "kind": "TEXT",
+          "id": "rh_addr2",
+          "x": 5,
+          "y": 9,
+          "w": 138,
+          "h": 3.4,
+          "align": "center",
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{ header.company_addr3|coalesce('') }} {{ header.company_city|coalesce('') }} - {{ header.company_pin|coalesce('') }}, {{ header.company_state|coalesce('') }}",
+          "ellipsis": true
+        },
+        {
+          "kind": "TEXT",
+          "id": "rh_contact",
+          "x": 5,
+          "y": 12.4,
+          "w": 138,
+          "h": 3.4,
+          "align": "center",
+          "font": {
+            "size": 6.5
+          },
+          "value": "Ph: {{ header.company_phone|coalesce('-') }}   |   {{ header.company_email|coalesce('-') }}",
+          "ellipsis": true
+        },
+        {
+          "kind": "LINE",
+          "id": "rh_rule1",
+          "x1": 5,
+          "y1": 19.8,
+          "x2": 143,
+          "y2": 19.8,
+          "widthPt": 0.8
+        },
+        {
+          "kind": "TEXT",
+          "id": "rh_title",
+          "x": 5,
+          "y": 20,
+          "w": 138,
+          "h": 5.4,
+          "align": "center",
+          "font": {
+            "size": 10,
+            "bold": true
+          },
+          "value": "QUOTATION"
+        },
+        {
+          "kind": "TEXT",
+          "id": "rh_rev",
+          "x": 108,
+          "y": 21,
+          "w": 35,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5
+          },
+          "value": "Rev. {{ header.revision_no }}",
+          "visible": "{{ header.revision_no }}"
+        },
+        {
+          "kind": "LINE",
+          "id": "rh_rule2",
+          "x1": 5,
+          "y1": 26.2,
+          "x2": 143,
+          "y2": 26.2,
+          "widthPt": 0.4
+        },
+        {
+          "kind": "TEXT",
+          "id": "rh_to_label",
+          "x": 5,
+          "y": 27,
+          "w": 70,
+          "h": 3.2,
+          "font": {
+            "size": 6,
+            "bold": true
+          },
+          "value": "To"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rh_cust_name",
+          "x": 5,
+          "y": 30.2,
+          "w": 70,
+          "h": 4,
+          "font": {
+            "size": 8,
+            "bold": true
+          },
+          "value": "{{ header.cust_name }}",
+          "ellipsis": true
+        },
+        {
+          "kind": "FIELD",
+          "id": "rh_cust_addr",
+          "x": 5,
+          "y": 34.2,
+          "w": 70,
+          "h": 6.8,
+          "font": {
+            "size": 6.5
+          },
+          "wrap": true,
+          "value": "{{ header.cust_addr|coalesce('') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rh_cust_place",
+          "x": 5,
+          "y": 37.5,
+          "w": 70,
+          "h": 3.4,
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{ header.cust_place|coalesce('') }}",
+          "ellipsis": true
+        },
+        {
+          "kind": "FIELD",
+          "id": "rh_cust_phone",
+          "x": 5,
+          "y": 40.9,
+          "w": 70,
+          "h": 3.4,
+          "font": {
+            "size": 6.5
+          },
+          "value": "Ph: {{ header.cust_phone|coalesce('-') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rh_cust_gstin",
+          "x": 5,
+          "y": 44.3,
+          "w": 70,
+          "h": 3.4,
+          "font": {
+            "size": 6.5
+          },
+          "value": "GSTIN: {{ header.cust_gstin|coalesce('-') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rh_refno",
+          "x": 122.5,
+          "y": 26.8,
+          "w": 20,
+          "h": 3.6,
+          "align": "left",
+          "font": {
+            "size": 7,
+            "bold": true
+          },
+          "ellipsis": true,
+          "value": " {{ header.quote_refno }}"
+        },
+        {
+          "kind": "TEXT",
+          "id": "rh_l_date",
+          "x": 97,
+          "y": 30.6,
+          "w": 26,
+          "h": 3.4,
+          "font": {
+            "size": 6.5
+          },
+          "value": "Date : ",
+          "align": "right"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rh_v_date",
+          "x": 122.5,
+          "y": 30.6,
+          "w": 20,
+          "h": 3.4,
+          "align": "left",
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{ header.quote_date|date('dd-MM-yyyy') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "ph_cont",
+          "x": 5,
+          "y": 48.4,
+          "w": 80,
+          "h": 3.2,
+          "align": "left",
+          "font": {
+            "size": 6,
+            "italic": true
+          },
+          "ellipsis": true,
+          "value": "{{ header.quote_refno }} · continued",
+          "visible": "{{ page.number > 1 }}"
+        },
+        {
+          "kind": "TEXT",
+          "id": "ph_title",
+          "x": 88,
+          "y": 47.9,
+          "w": 55,
+          "h": 3.2,
+          "align": "right",
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "QUOTATION"
+        },
+        {
+          "kind": "LINE",
+          "id": "ph_rule_top",
+          "x1": 5,
+          "y1": 51.1,
+          "x2": 143,
+          "y2": 51.1,
+          "widthPt": 0.8,
+          "x": 5,
+          "y": 51.1
+        },
+        {
+          "kind": "TEXT",
+          "id": "ph_c_sl",
+          "x": 5,
+          "y": 51.7,
+          "w": 7,
+          "h": 3.4,
+          "align": "center",
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "#"
+        },
+        {
+          "kind": "TEXT",
+          "id": "ph_c_size",
+          "x": 58.5,
+          "y": 51.7,
+          "w": 18,
+          "h": 3.4,
+          "align": "center",
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "Size"
+        },
+        {
+          "kind": "TEXT",
+          "id": "ph_c_qty",
+          "x": 76.5,
+          "y": 51.2,
+          "w": 20,
+          "h": 3.4,
+          "align": "center",
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "Qty"
+        },
+        {
+          "kind": "TEXT",
+          "id": "ph_c_rate",
+          "x": 93.5,
+          "y": 51.2,
+          "w": 15,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "Rate"
+        },
+        {
+          "kind": "TEXT",
+          "id": "ph_c_disc",
+          "x": 110,
+          "y": 51.7,
+          "w": 15,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "Disc"
+        },
+        {
+          "kind": "TEXT",
+          "id": "ph_c_amt",
+          "x": 125.5,
+          "y": 51.2,
+          "w": 17,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "Amount"
+        },
+        {
+          "kind": "LINE",
+          "id": "ph_rule_bot",
+          "x1": 5,
+          "y1": 55.4,
+          "x2": 143,
+          "y2": 55.4,
+          "widthPt": 0.8,
+          "x": 5,
+          "y": 55.4
+        },
+        {
+          "kind": "TEXT",
+          "id": "text_1",
+          "x": 97,
+          "y": 26.8,
+          "w": 26,
+          "h": 3.4,
+          "font": {
+            "size": 6.5
+          },
+          "value": "Quot No : ",
+          "align": "right"
+        }
+      ]
+    },
+    {
+      "type": "DETAIL",
+      "heightMm": 4.6,
+      "groupLevel": 0,
+      "printOn": "ALL_PAGES",
+      "autoGrow": true,
+      "keepTogether": true,
+      "keepWithNext": false,
+      "keepWithLastDetail": false,
+      "spacingRows": 0,
+      "elements": [
+        {
+          "kind": "FIELD",
+          "id": "d_sl",
+          "x": 5,
+          "y": 0.6,
+          "w": 7,
+          "h": 3.4,
+          "align": "center",
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{ row.__index }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "d_size",
+          "x": 58.5,
+          "y": 0.6,
+          "w": 18,
+          "h": 3.4,
+          "align": "left",
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{ row.size }}",
+          "ellipsis": true
+        },
+        {
+          "kind": "FIELD",
+          "id": "d_qty",
+          "x": 76.5,
+          "y": 0.6,
+          "w": 11,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{row.net_qty}}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "d_uom",
+          "x": 88.5,
+          "y": 0.6,
+          "w": 9,
+          "h": 3.4,
+          "align": "left",
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "{{ row.unit_name }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "d_rate",
+          "x": 93.5,
+          "y": 0.6,
+          "w": 15,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{ row.rate|fmt('##,##,##0.00') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "d_disc",
+          "x": 110,
+          "y": 0.6,
+          "w": 15,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5
+          },
+          "blankWhenZero": true,
+          "value": "{{ row.total_disc_amt|fmt('##,##,##0.00') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "d_amt",
+          "x": 126,
+          "y": 0.6,
+          "w": 17,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{ row.taxable_amt|fmt('##,##,##0.00') }}"
+        }
+      ],
+      "dataset": "items"
+    },
+    {
+      "type": "SUMMARY",
+      "heightMm": 5.2,
+      "groupLevel": 0,
+      "printOn": "ALL_PAGES",
+      "autoGrow": false,
+      "keepTogether": true,
+      "keepWithNext": false,
+      "keepWithLastDetail": true,
+      "spacingRows": 0,
+      "elements": [
+        {
+          "kind": "LINE",
+          "id": "s_rule_top",
+          "x1": 5,
+          "y1": 0.2,
+          "x2": 143,
+          "y2": 0.2,
+          "widthPt": 0.8
+        },
+        {
+          "kind": "TEXT",
+          "id": "s_items",
+          "x": 5,
+          "y": 1.2,
+          "w": 40,
+          "h": 3.4,
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "Items: {{ header.total_items|coalesce(0)|fmt('0') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "s_qty",
+          "x": 71.5,
+          "y": 1.2,
+          "w": 40,
+          "h": 3.4,
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "value": "Total Qty: {{ row.qty|fmt('0.00') }}",
+          "aggregate": {
+            "fn": "sum",
+            "scope": "REPORT",
+            "dataset": "items",
+            "over": "{{ row.qty }}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "REPORT_FOOTER",
+      "heightMm": 62,
+      "groupLevel": 0,
+      "printOn": "ALL_PAGES",
+      "autoGrow": false,
+      "keepTogether": true,
+      "keepWithNext": false,
+      "keepWithLastDetail": false,
+      "spacingRows": 0,
+      "elements": [
+        {
+          "kind": "LINE",
+          "id": "rf_rule_top",
+          "x1": 5,
+          "y1": 0.2,
+          "x2": 143,
+          "y2": 0.2,
+          "widthPt": 0.8
+        },
+        {
+          "kind": "TEXT",
+          "id": "rf_l_gross",
+          "x": 89,
+          "y": 1.2,
+          "w": 32,
+          "h": 3.4,
+          "align": "left",
+          "font": {
+            "size": 6.5
+          },
+          "value": "Gross Amount"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rf_v_gross",
+          "x": 123,
+          "y": 1.2,
+          "w": 20,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5
+          },
+          "value": "{{ header.taxable_amt|fmt('##,##,##0.00') }}"
+        },
+        {
+          "kind": "TEXT",
+          "id": "rf_l_round",
+          "x": 89,
+          "y": 14.8,
+          "w": 32,
+          "h": 3.4,
+          "align": "left",
+          "font": {
+            "size": 6.5
+          },
+          "value": "Round Off"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rf_v_round",
+          "x": 123,
+          "y": 14.8,
+          "w": 20,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6.5
+          },
+          "blankWhenZero": true,
+          "value": "{{ header.round_off|fmt('##,##,##0.00') }}"
+        },
+        {
+          "kind": "LINE",
+          "id": "rf_rule_total_top",
+          "x1": 88.5,
+          "y1": 18.1,
+          "x2": 143.5,
+          "y2": 18.1,
+          "widthPt": 0.8,
+          "x": 88.5,
+          "y": 18.1
+        },
+        {
+          "kind": "TEXT",
+          "id": "rf_l_total",
+          "x": 89,
+          "y": 19.2,
+          "w": 32,
+          "h": 5,
+          "align": "left",
+          "font": {
+            "size": 9,
+            "bold": true
+          },
+          "value": "GRAND TOTAL"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rf_v_total",
+          "x": 122,
+          "y": 19.2,
+          "w": 21,
+          "h": 5,
+          "align": "right",
+          "font": {
+            "size": 9,
+            "bold": true
+          },
+          "value": "{{ header.quote_amt|fmt('##,##,##0.00') }}"
+        },
+        {
+          "kind": "LINE",
+          "id": "rf_rule_total_bot",
+          "x1": 88.5,
+          "y1": 24.2,
+          "x2": 143.5,
+          "y2": 24.2,
+          "widthPt": 0.8,
+          "x": 88.5,
+          "y": 24.2
+        },
+        {
+          "kind": "TEXT",
+          "id": "rf_words_label",
+          "x": 5,
+          "y": 1.2,
+          "w": 80,
+          "h": 3.2,
+          "font": {
+            "size": 6,
+            "bold": true
+          },
+          "value": "Amount in Words"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rf_words",
+          "x": 5,
+          "y": 4.4,
+          "w": 80,
+          "h": 8,
+          "font": {
+            "size": 6.5,
+            "italic": true
+          },
+          "wrap": true,
+          "value": "{{ header.quote_amt|numToWords('Rupees', 'Paise') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rf_payment",
+          "x": 5,
+          "y": 13.2,
+          "w": 80,
+          "h": 3.4,
+          "font": {
+            "size": 6.5
+          },
+          "ellipsis": true,
+          "value": "Payment: {{ header.payment_terms|coalesce('-') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rf_delivery",
+          "x": 5,
+          "y": 16.6,
+          "w": 80,
+          "h": 3.4,
+          "font": {
+            "size": 6.5
+          },
+          "ellipsis": true,
+          "value": "Delivery: {{ header.delivery_terms|coalesce('-') }}"
+        },
+        {
+          "kind": "TEXT",
+          "id": "rf_terms_label",
+          "x": 5,
+          "y": 20.6,
+          "w": 80,
+          "h": 3.2,
+          "font": {
+            "size": 6,
+            "bold": true
+          },
+          "value": "Terms & Conditions"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rf_terms",
+          "x": 5,
+          "y": 23.8,
+          "w": 80,
+          "h": 14,
+          "font": {
+            "size": 6
+          },
+          "wrap": true,
+          "value": "{{ header.terms_conditions|coalesce('') }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rf_remarks",
+          "x": 5,
+          "y": 38.2,
+          "w": 80,
+          "h": 6.8,
+          "font": {
+            "size": 6
+          },
+          "wrap": true,
+          "value": "Remarks: {{ header.remarks }}",
+          "visible": "{{ header.remarks }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "rf_sign_for",
+          "x": 88,
+          "y": 27.5,
+          "w": 55,
+          "h": 3.6,
+          "align": "right",
+          "font": {
+            "size": 6.5,
+            "bold": true
+          },
+          "ellipsis": true,
+          "value": "For {{ header.company_name }}"
+        },
+        {
+          "kind": "TEXT",
+          "id": "rf_sign_label",
+          "x": 88,
+          "y": 40.6,
+          "w": 55,
+          "h": 3.4,
+          "align": "right",
+          "font": {
+            "size": 6
+          },
+          "value": "Authorised Signatory"
+        },
+        {
+          "id": "crosstab_1",
+          "x": 88,
+          "y": 1.48,
+          "z": 0,
+          "kind": "CROSSTAB",
+          "w": 56,
+          "h": 4.2,
+          "dataset": "charges",
+          "rowBy": "{{ row.chg_name }}",
+          "columnBy": "{{row.}}",
+          "measure": "{{ row.cd_net_amt }}",
+          "fn": "sum",
+          "format": "##,##,##0.00",
+          "blankWhenZero": true,
+          "measureLabel": "",
+          "extraRowBys": [],
+          "extraColumnBys": [],
+          "extraMeasures": [],
+          "corner": "",
+          "rowHeaderWidthMm": 34,
+          "columnWidthMm": 0,
+          "headerHeightMm": 0,
+          "rowHeightMm": 3.4,
+          "showRowTotals": false,
+          "showColumnTotals": false,
+          "totalsLabel": "Total",
+          "rowSort": "LABEL_ASC",
+          "columnSort": "FIRST_SEEN",
+          "maxColumns": 1,
+          "overflow": "FOLD",
+          "overflowLabel": "Other",
+          "gridLines": false,
+          "repeatHeader": true,
+          "font": {
+            "size": 6.5
+          },
+          "headerFont": {
+            "size": 6.5,
+            "bold": true
+          }
+        }
+      ]
+    },
+    {
+      "type": "PAGE_FOOTER",
+      "heightMm": 8,
+      "groupLevel": 0,
+      "printOn": "ALL_PAGES",
+      "autoGrow": false,
+      "keepTogether": false,
+      "keepWithNext": false,
+      "keepWithLastDetail": false,
+      "spacingRows": 0,
+      "elements": [
+        {
+          "kind": "LINE",
+          "id": "pf_rule",
+          "x1": 5,
+          "y1": 0.4,
+          "x2": 143,
+          "y2": 0.4,
+          "widthPt": 0.4
+        },
+        {
+          "kind": "FIELD",
+          "id": "pf_left",
+          "x": 5,
+          "y": 1.2,
+          "w": 60,
+          "h": 3.2,
+          "align": "left",
+          "font": {
+            "size": 6
+          },
+          "ellipsis": true,
+          "value": "{{ header.quote_refno }} · {{ header.quote_date|date('dd-MM-yyyy') }}"
+        },
+        {
+          "kind": "TEXT",
+          "id": "pf_center",
+          "x": 66,
+          "y": 1.2,
+          "w": 40,
+          "h": 3.2,
+          "align": "center",
+          "font": {
+            "size": 5.5,
+            "italic": true
+          },
+          "value": "Computer generated quotation"
+        },
+        {
+          "kind": "TEXT",
+          "id": "pf_right",
+          "x": 107,
+          "y": 1.2,
+          "w": 36,
+          "h": 3.2,
+          "align": "right",
+          "font": {
+            "size": 6
+          },
+          "value": "Page {{ page.number }} of {{ page.total }}"
+        },
+        {
+          "kind": "FIELD",
+          "id": "pf_printed",
+          "x": 5,
+          "y": 4.4,
+          "w": 138,
+          "h": 3,
+          "align": "center",
+          "font": {
+            "size": 5.5
+          },
+          "value": "{{ header.branch_name|coalesce('') }} · printed {{ sys.now|date('dd-MM-yyyy HH:mm') }}"
+        }
+      ]
+    },
+    {
+      "type": "NO_DATA",
+      "heightMm": 14,
+      "groupLevel": 0,
+      "printOn": "ALL_PAGES",
+      "autoGrow": false,
+      "keepTogether": false,
+      "keepWithNext": false,
+      "keepWithLastDetail": false,
+      "spacingRows": 0,
+      "elements": [
+        {
+          "kind": "TEXT",
+          "id": "nd_msg",
+          "x": 5,
+          "y": 4,
+          "w": 138,
+          "h": 5.4,
+          "align": "center",
+          "font": {
+            "size": 8,
+            "italic": true
+          },
+          "value": "This quotation has no items."
+        }
+      ]
+    }
+  ]
+}

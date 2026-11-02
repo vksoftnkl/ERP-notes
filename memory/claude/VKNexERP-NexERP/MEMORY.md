@@ -1,0 +1,2 @@
+- [NexERP prod/dev topology and config seeds](nexerp-prod-and-dev-topology.md) — prod at /opt/erp-server tracks DEV-v1; grids/ui-tables are seed data regenerated with `npm run seed:export:ui-config`
+- [Prod DB access rules](prod-db-access-rules.md) — use `sudo -u postgres psql`, never inline the password; prod writes/deploys need the user's go-ahead

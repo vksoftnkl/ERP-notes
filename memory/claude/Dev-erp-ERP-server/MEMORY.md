@@ -1,0 +1,113 @@
+- [Prisma schema is generated from fragments](prisma-schema-is-generated.md) — schema.prisma hand edits get overwritten; fragments in prisma/fixed are source of truth
+- [Prisma migration gotchas](prisma-migration-gotchas.md) — future-dated timestamps mis-sort new migrate-dev migrations; checksum drift
+- [Menu tree history (notes 158 → 20261027100000)](notes-158-menu-restructure-withdrawn.md) — restructure re-applied 2026-10-27 as 20261027100000_menu_restructure + seed matched; 12 is "Sales Bill", 283 "Till Setup"
+- [Configured grid_param convention](configured-grid-param-convention.md) — run binds grid_param into stored grid_sql via bare p_* named tokens
+- [Sales masters share a PK with a linked account group](sales-masters-linked-account-group.md) — state/city/area each mirror fields into an account_groups row (same id); keep in sync on create/update/softDelete
+- [Customer & supplier share a PK with a linked account ledger](customer-supplier-linked-ledger.md) — cus*/sup* mirror into acc_ledger_master (same id)
+- [Prisma String[] columns reject null](prisma-scalar-list-null.md) — null in a scalar list surfaces as the misleading "Argument `<relation>` is missing"; normalise to [] in the DTO
+- [Bill tables are partitioned by acc_year](sale-bill-acc-year-partitions.md) — a new fiscal year needs ensure_acc_year_partitions('YYYY-YYYY') or every save 500s
+- [Grid columns live in fixed.ui_table_columns](ui-table-columns-drive-grids.md) — a new item-grid column needs a client meaning + TEXT_LINE_FIELDS + a seeded DB row, or it renders nowhere and saves NULL
+- [Local HTTPS runs on an mkcert CA](local-https-mkcert-setup.md) — mkcert/certutil in ~/.local/bin (no sudo); Node needs NODE_EXTRA_CA_CERTS
+- [quotation-entry-view.tsx holds a NUL sentinel](quotation-entry-view-nul-sentinel.md) — git calls it binary; edit byte-wise or the "\0new" sentinel is lost
+- [CloudJiffy deploy topology](cloudjiffy-deploy-topology.md) — nginx LB terminates TLS, app plain HTTP :3000 via ecosystem.config.js; cert issues are dashboard-side (Custom SSL/Let's Encrypt)
+- [VPS deploy topology](vps-deploy-topology.md) — 169.58.213.171: migrations need the postgres superuser (OWNER TO postgres) but the app runs as erp_app
+- [Pre-existing test failures](pre-existing-test-failures.md) — unit suite ALL GREEN since 2026-10-23 (495/9254 after notes 160) + tsc clean; any unit failure is new. Notes 140 mocks: databaseToday/$queryRaw, gateway.calendar
+- [Stock engine is 100% TypeScript](stock-engine-ddl-lives-outside-repo.md) — since 2026-09-28 every type incl. transfers posts via StockPostingService with a `postShape`; no SQL function/trigger may be added
+- [Stock → accounts posting](stock-to-accounts-posting.md) — PERPETUAL: OPENING/PHYSICAL write a (STOCK, type, svh_id) voucher from the ledger rows; sales shadows post none; transfers post only their loading charges (TRF, notes 153)
+- [Stock e2e suites run now](stock-e2e-suites-run-now.md) — opening/physical/transfer suites stopped skipping on 2026-09-28; order-dependent, reset by afterEach cancels
+- [Stock adjustment family](stock-adjustment-family.md) — one module for ADJUSTMENT/ISSUE/DAMAGE/EXPIRY_WRITEOFF + re-lot + Move stock (BUCKET_MOVE = ADJUSTMENT with svi_to_bucket, no voucher, item cost skips BUCKET_*)
+- [txn_status_log holds status steps, not saves](txn-status-log-stock-vouchers.md) — one row per STEP; stock vouchers file as INVENTORY/STOCK_ADJUSTMENT via rules.statusDocType
+- [VSCode serves stale Prisma types](vscode-stale-prisma-types.md) — 26MB index.d.ts makes the TS server cache phantom errors; run `tsc --noEmit` before "fixing" anything
+- [ui_tables 5 "opening stock" is stale](ui-tables-5-opening-stock-is-stale.md) — its 45 columns describe the retired osl_ screen; menu_master 44 is fine; there is no ui_table_master table
+- [Several Claude sessions edit this repo at once](concurrent-claude-sessions.md) — check mtimes on shared files before a multi-edit task
+- [Stock voucher numbering lock is a no-op](stock-voucher-numbering-lock-is-a-noop.md) — the advisory lock sat in an unreferenced CTE that PG never ran; fixed 2026-09-08 with count(pg_advisory_xact_lock(...))
+- [HTTP-test guarded routes without a password](erp-server-http-testing-without-credentials.md) — override TokenService + AuthSessionService providers; tsx cannot boot the Nest graph
+- [A cancel leaves the forward ledger row live](stock-ledger-cancel-leaves-forward-row.md) — `sml_is_reversal = false` is not "not cancelled"; EXISTS checks need unreversedLedgerRow()
+- [fn_ledger_for is TypeScript, not plpgsql](fn-ledger-for-is-typescript.md) — role→ledger resolution lives in ledger-map.helper.ts
+- [Voucher totals trigger — FIXED 2026-09-17](voucher-totals-trigger-missing.md) — now live via migration 20260917170000; the columns are DERIVED, never write them
+- [fk_cd_tax and ix_cd_tax are missing](fk-cd-tax-and-ix-cd-tax-missing.md) — txn_charge_detail.cd_tax_code is unguarded; tail of migration 20260912050000 never ran
+- [ck_avh_balanced fires per statement, not per row](ck-avh-balanced-fires-per-statement.md) — stripping ALL legs in one UPDATE passes (0=0); only a one-sided subset is refused
+- [/receipts/amend leans on partial unique indexes](receipt-amend-unwind-relies-on-partial-indexes.md) — its unwind soft-deletes so legs, cheque numbers and the ADVANCE refno can be reused; a non-partial unique index breaks it
+- [avh_against_voucher_id is overloaded](avh-against-voucher-id-is-overloaded.md) — it names BOTH a PDC child and a reversal voucher
+- [sale_bill_item profit is PER UNIT](sale-bill-item-profit-is-per-unit.md) — sbi_item_profit/sbi_profit_pre_tax multiply by sbi_net_qty; client-supplied and nullable per line
+- [`declare` strips DTO decorators](declare-strips-dto-decorators.md) — no validation and no Swagger `required`; TS suggests it for TS2612; still live in save-stock-transfer-receive.dto.ts
+- [Sales e2e specs need the rights fixture and --runInBand](sales-e2e-specs-rights-fixture.md) — nobody holds um_can_post; harness grants tester1 and revokes; parallel workers race on it
+- [Sales posting chain findings 2026-09-22](sales-posting-chain-findings-2026-09-22.md) — shadow voucher needs a registered device uuid; DC/SR/DCR counter NOT NULL; reversal voucher takes its own number
+- [Money must stay Prisma.Decimal into numeric columns](money-decimal-rule-sales.md) — no epsilons; sale-order/temp-credit/stock-voucher converted; ~667 float sites remain, blocked on bill-snapshot + SalesLeg types
+- [The five transaction rights are grantable now](user-menu-transaction-rights.md) — /user-administration carries um_can_post…retender; a menus[] save is a FULL REPLACE, omitting one revokes it
+- [menu_verbs says what a screen can DO](menu-verbs-capability-column.md) — text[] on menu_master; render a permission cell only for a verb the menu holds; RETENDER on menu 12 alone
+- [Sales audit: actorName vs actor](sales-actor-name-vs-actor-id.md) — text sb_/so_modified_by take ctx.actorName (login name); uuid audit columns keep ctx.actor
+- [Sale-bill counter payments are adjustment rows](sale-bill-alloc-is-seeded.md) — FIXED notes 49: ALLOCATION row per counter tender; never write abl_alloc_amount directly
+- [Books reconcile trial check refuses posts](books-reconcile-trial-check.md) — 422 ACC_PARTY/CHEQUES_OUT_OF_BALANCE on every post; old mismatches block a party
+- [Cloud sync is local-only](cloud-sync-is-local-only.md) — module+migration gitignored but fragments declare *_sync_date; bare columns ship in committed 20260925110000
+- [Voucher Register module](voucher-register-module.md) — /vouchers/* live 2026-09-26
+- [abl_status / abl_pending_amount are generated](abl-status-pending-are-generated.md) — cancelled bills keep reading OPEN house-wide; fix readers (abl_is_deleted filter), not cancel paths
+- [New ledger roles need the catalogue](new-ledger-role-needs-catalogue.md) — acc_ledger_role insert w/o fn_ledger_map_catalogue() update aborts the boot seed; that seed file COMMITs, can't be dry-run
+- [Issued cheques were designed here, docs missing](issued-cheques-design.md) — notes 55 names are ours (README lists them); issued cheque tender rows name the bank, so in-hand functions count received only
+- [Receipt/Payment money side is a nature rule](receipt-payment-money-side.md) — sideVerdict() before the group list: RcpV DR cash/bank only + CR never, PmtV mirror; ledger-pick filters the same
+- [Cheque status steps file by apd_tra_type](cheque-status-doc-type-by-tra-type.md) — acc_pdc_register holds R and P; chequeDocTypeOf() picks CHEQUE_RECEIVED/CHEQUE_ISSUED for writer AND both history readers
+- [Voucher register keeps the remainder as an ADVANCE](voucher-register-advance-remainder.md) — notes 57: RcpV/PmtV short allocation → one ADVANCE bill per party leg (leg side, no due date); over still BILLWISE_SHORT
+- [Payment module (menu 100)](payment-module.md) — /payments/* live 2026-09-29; Pmt, grid 123, tdAmount includes the bank charge; PPD from supplier terms; notes 61/62 applied
+- [DB session timezone is Asia/Kolkata](db-session-timezone-ist.md) — a DATE column vs a JS Date bound ::timestamptz is off by 5h30; bind 'YYYY-MM-DD' ::date
+- [Shared books guard has no PDC allowance](shared-books-guard-no-pdc-allowance.md) — a party with an un-matured post-dated cheque 422s every shared assertBooksReconcile caller (sales bill post, cheques) until maturity
+- [Receipt/payment routes check menu rights](receipt-payment-menu-rights.md) — since notes 62 every /receipts (99) and /payments (100) route needs a user_menus flag; no SUPER ADMIN bypass
+- [print_log CHECK refuses REPRINT](print-log-reprint-check-mismatch.md) — TS constants allow REPRINT and copy 10, the live CHECK does not; the swallowed insert drops the row silently
+- [Redeclared DTO props keep base Swagger](dto-redeclare-keeps-base-swagger.md) — class-validator takes the subclass's rules, nestjs/swagger still merges the base's minimum; use OmitType + declare fresh
+- [Never read item_tax_master](avoid-item-tax-master.md) — user rule: taxes are tax_rate_master ids; old module, /item-taxes routes and grid 5 retired 2026-09-30, table kept until asked
+- [DTO hasOwnProperty is always true](dto-hasownproperty-always-true.md) — ES2022 class fields make every declared field own; an update must never write `dto.x ?? null`
+- [Item master delete/restore since notes 67](item-master-delete-restore.md) — no preset = item follows its group policy (notes 68), group row shared across companies (69, context company = login token's)
+- [GST config module (notes 79)](gst-config-module.md) — src/modules/gst R1–R9; GST_CRED_KEY (dev box v1, never regenerate)
+- [Dev box runs the API twice](dev-box-runs-two-apis.md) — PM2 :3000 (dist, prod env) + nest --watch :3011 (HTTPS); both read .env at boot; the Qt client uses :3011; the watch child hangs on every recompile (kill -9 it); restart recipe inside
+- [GSTIN search runs on GSP rows](gstin-search-runs-on-gsp-rows.md) — /gst/search obeys the GST Provider screen (GSTIN_VERIFY chain); no GST_LOOKUP_* env; CHARTERED live host is deprecatedgstapi
+- [Transaction audit revisions (notes 89)](txn-audit-revisions.md) — one before/after /get snapshot row per save + log_rev_no; stock vouchers done (sviId upsert), 17 other txn services pending
+- [Loyalty Status report & lot types](loyalty-status-report-and-lot-types.md) — menu 79 routes + actions built 2026-10-05; lots = EARN/OPENING/ADJUST/TRANSFER via LOYALTY_LOT_TXN_TYPES; ADJUST may name a lot
+- [Temp credit status trail (notes 90)](temp-credit-status-trail.md) — TEMP_CREDIT steps keyed by atc_id from post/recompute/cancel/retender; recompute diffs before/after and logs real moves only
+- [Lot-actual costing (notes 92/93)](lot-actual-costing-notes-92.md) — tracked items costed per lot on sbl_avg_cost_rate, plain stock on the item average
+- [Negative average ex-tax cost](stock-negative-average-wot.md) — ZT-ITEM-B 0-wot opening drained the pool <0; engine treats ≤0 avg/lot wot as not stated (10-15); CHECKs fire before ON CONFLICT
+- [Redis usage audit 2026-10-07](redis-usage-audit.md) — HTTP cache key ignores user/company (usermenu leaks), sessions no TTL, KEYS invalidation, BullMQ dead; numbering never in Redis
+- [Till management (47–49 + phases 1–2, ExpV)](till-management-schema.md) — schema 20261008100000-180000, src/modules/till; money paths governed only on a device bound to a counter; ExpV menu 277
+- [Tender settlement (non-cash plan, 49)](tender-settlement-module.md) — /tender-settlement/* menu 278; card last-4 rule in the tender writer, UPI skipped; OVERRIDE stands in for approvals
+- [Grid timestamptz shows UTC on the client](grid-timestamptz-shows-utc.md) — the runner sends a Z instant, Qt shows its clock face; emit IST text with +05:30 in grid SQL; date columns are fine
+- [Two e2e suites steal the default safe](e2e-suites-steal-default-safe.md) — tender-settlement-http and expense-voucher-http un-default the live ZTS safe; restore it after running them
+- [E2E suites run on the live branch](e2e-suites-run-on-live-branch.md) — teardowns delete only by test-owned ids, never by day/branch
+- [Raw-query unique errors are P2010](raw-query-unique-errors-are-p2010.md) — $queryRaw 23505 is P2010/meta.code, not P2002; isUniqueConstraintError covers both since 2026-10-12
+- [Account Day Summary (menu 284)](account-day-summary-module.md) — reports/day-summary built 2026-10-12; balance SQL shared with Ledger Statement in reports/common; type filter nulls balances
+- [Generic plans slow raw-SQL reports](prisma-generic-plan-slow-reports.md) — after 5 runs of a prepared $queryRaw, `$x IS NULL OR …` predicates go ~20 ms → ~3 s; SET LOCAL plan_cache_mode = force_custom_plan
+- [Synthetic vouchers in a rolled-back tx](synthetic-vouchers-rolled-back.md) — ck_avh_status_on needs status_on/by, mirror before original, all legs in one INSERT; drive service build*(tx) methods
+- [Till variance decision (notes 105 A)](till-variance-decision-notes-105.md) — /till/sessions/decide-variance live 2026-10-12: assertApprover (self/grant/limit/PIN 403s), SUPER ADMIN = implicit HO_FINANCE
+- [Save & post in one call (notes 94 B / 106)](save-and-post-one-call-notes-106.md) — /create + post:true (or the posted status) runs save+post in one tx on bills/orders/DCs/receipts/payments/physical since 2026-10-12; payment 428 keeps the draft (notes 131)
+- [Till witness PIN (notes 108)](till-witness-pin-notes-108.md) — PICKUP/TOP_UP on movements/create want witnessPin, movements/change from/toWitnessPin; stamp tcm_witness_verified_on
+- [Counter-signed pickups + drop safe (notes 110)](till-counter-signed-movements-notes-110.md) — /movements/create PICKUP/TOP_UP = cashier calls + supervisorId/supervisorPin (NOT company-scoped: home usr_company_id doesn't bind)
+- [Cash awaiting receipt (notes 113/114)](till-handover-receipt-notes-113.md) — till.handover_receipt REQUIRED (user's company is): CLOSE_HANDOVER/DROP → TILL_CASH_AWAITING
+- [Day close & session exceptions (notes 117)](till-day-close-notes-117.md) — days/close-check·close·reopen, sessions/force-close·reopen·x-report, TILL_SESSION_Z/X + TILL_DAY_Z providers
+- [Safe: balance, count, remit (notes 118)](till-safe-notes-118.md) — Cash Office 287; safe gaps = till_variance stage SAFE/REMIT, no session; counter decides + witness = two-person second
+- [Error codes on every refusal (notes 119)](error-codes-notes-119.md) — Qt words boxes by errors[].code only; house ValidationPipe (VALIDATION_*); receipts/payments/cheques coded (notes 124: ACC/CHQ + VCH)
+- [Error wording on the server (notes 120)](error-wording-notes-120.md) — fixed.error_message + Error_Messages.json seed (whole catalogue; missing rows deactivated); every filter adds `user`
+- [Till notes 122 (retest fixes)](till-notes-122.md) — PENDING_APPROVAL drawer refuses cash; till.cash_out_over_expected (DEVICE, REFUSE) → TILL_CASH_SHORT_IN_DRAWER
+- [Docs plan — Phase 0 done](docs-plan-phase-0.md) — discovery on branch docs/phase-0-discovery (not pushed); web/Qt/mobile repo paths; Phase 1 waits on section 8 answers
+- [Till notes 124 open list](till-notes-124-open-list.md) — approval gate /till/approvals/* + till.approval_gate WARN|REFUSE; CLOSED-session decide; safe belowZero; "notes 124" names two docs
+- [User Role names + SUPER ADMIN reserved (notes 125)](user-role-super-admin-notes-125.md) — USER_ROLE_RESERVED 403; /user-administration + /users were @Public (password reset with no login) until 2026-10-16
+- [Every cash/bank line carries a tender (notes 126/128)](money-lines-tender-notes-126.md) — coverMoneyLines after every leg writer; SALES never refused; per-voucher readers filter tdSrcDocType; tender-master codes split (128 §2)
+- [Notes 127 status](notes-127-status.md) — Qt leftovers of notes 124 all built 10-16; `code` REQUIRED on shared error details; plain 4xx → HTTP_<status>; hide-SUPER-ADMIN list not done
+- [Grid SQL must hold no comments](grid-sql-no-comments.md) — runner 400s on any `--` or `/*`; notes 130 broke grid 119 that way (fixed notes 132)
+- [Textile tags notes 136 status](textile-tags-notes-136-status.md) — plan folder share/schema/stock/textile is NOT on the box; lot-identity premise verified 2026-10-17; reserve folds upper(btrim()); free ids menu 290+ grid 175+ dropdown 70+
+- [print_log has no Qt writer](print-log-has-no-qt-writer.md) — Qt prints via /preview + QPrinter and never calls /print-render/log (0 rows on dev 10-17); web does; print_log not in the year roll; void design REV 1 reviewed, not built
+- [Item master notes 137](item-master-notes-137.md) — name/code/SKU unique per company any case; child DELETEs delete-only; C1 company scoping deliberately not done
+- [192.168.0.106 is this dev box](dev-box-is-192-168-0-106.md) — "the box on 192.168.0.106" in notes = localhost ERP DB
+- [Item base unit lock (notes 138)](item-base-unit-lock-notes-138.md) — 409 ITEM_BASE_UNIT_LOCKED once a base row exists; header derived; A3: sales post falls back to current factor when line factor is 0
+- [Item masters notes 139](item-masters-notes-139.md) — names unique among live rows any case (units exact-case in DB: Box/BOX); qty-price overlap rules; C1/C2 open
+- [Unit jest is transpile-only](unit-jest-is-transpile-only.md) — no type-check since 2026-10-23 (type-checking workers got OOM-SIGKILLed); spec type errors only in tsc --noEmit
+- [/txn/adjacent registry (notes 142/152)](txn-adjacent-notes-142.md) — one Prev/Next for 14 docTypes; per-device serials (stock svh_slno, POS bills) are NOT in the walk key, (date, created_on, id) instead; drafts sort per list
+- [Notes 150 physical stock review](notes-150-physical-stock-review.md) — 2026-10-24: server totals + login author for ALL stock vouchers, menu-45 rights (PHY_RIGHT_*), dup-holding/freeze-held/superseded 409s, docDatetime needs syncDate to backdate
+- [Notes 151 stock adjustment review](notes-151-stock-adjustment-review.md) — 2026-10-24: menu-264 ADJ_RIGHT_*, cost rebuild uses last LIVE row (all-cancelled item = 0), StockPostHooks beforePost/afterPost run adjustment rules in the post tx, re-lot same bucket, lot company check (shared preflight too), picker batchNo + size/colour/model, by-batch avgCostRate
+- [Notes 143 stock voucher hardening](notes-143-opening-backend-review.md) — row lock + in-tx preflight, base qty = qty × factor, stock-voucher cancels never negative, login = actor, refno skips taken
+- [Token scope is home company + device branch](token-scope-is-home-company-and-device-branch.md) — not a login choice; users post cross-company; no access table, so don't enforce body == token
+- [Price change log (notes 144)](price-change-log-notes-144.md) — PriceMasterWriter is the only price-table writer (guard spec); /item-price-log/* on menu 290; gaps route
+- [Table registry db_table_master](db-table-master-registry.md) — every table classified (kind/write mode/module/header) + dtm_sync_col names its sync-date column; new table → row in Db_Table_Master.sql or the drift e2e spec fails
+- [Textile auto batch no + size/colour (2026-10-23)](textile-auto-batch-no.md) — opening save numbers blank batches via BATCH counter (stock.auto_batch_no) + writes stock_batch_detail size/colour/model; /stock/lots/by-batch scan; tag plan parked
+- [Item unit factor direction](item-unit-factor-direction.md) — item card rule (biggest first, to-base = base cum / row cum); 99d0a468 inverted it, restored 2026-10-23; .106 data fixed 2026-10-27 (plan/notes-161-unit-factor-fix.sql), OPN0006 re-key by user
+- [Godown Transfer loading (notes 153)](notes-153-godown-transfer-loading.md) — crew/rates on the doc, (qty+free)×rate charges, transfer reasons (BOTH only), lot identity on GET lines, TRF voucher DR LOADING_CHARGES / CR LOADING_PAYABLE at despatch (any cogs mode), menu-41 gate; branch halves post too since notes 156 (settle-short moved to TRANSFER_SHORT)
+- [Old transfer HTTP suites corrupt dev data](stale-transfer-http-suites-are-destructive.md) — 5 suites expect pre-09-28 engine gaps; given rights they post, then raw-SQL teardowns orphan ledger rows; keep them at the menu-41 403
+- [Stock small masters (notes 159)](stock-small-masters-notes-159.md) — /stock/ageing-slabs on menu 294 (AGE_), preset save/deactivate on 249 (SPT_); lock = flags+valuation+code once used; GET uncached
+- [Transfers notes 160](transfers-notes-160.md) — free qty only from free stock (save + engine), /stock/transfer/recall on menu 192 CANCEL, dev_code ONE series across all devices (not per branch), refno D1/00016
+- [Boot seed undoes row deletes](boot-seed-undoes-row-deletes.md) — DB_AUTO_SEED on dev+VPS re-inserts rows a migration DELETEd unless the seed file drops them too (menus 2026-10-31)

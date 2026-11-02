@@ -1,0 +1,258 @@
+&1 Sales [1] ---
+  Customers [10] ---
+  Optical Prescription [189]
+  Sales Order [11]
+  Sales Entry [12]
+  Sale Entry (Bulk) [229]
+  Sales Return [13]
+  Quotation [14]
+  Deliver Note [182] (hidden)
+  Pick List [15] (hidden)
+  Contract [142] (hidden) ---
+  Bill Delivery Update [226]
+  Temp Credits [257]
+  e-Way Bill [153] (hidden)
+  SO Management [172] (hidden)
+  Order - Invoice [16] (hidden)
+  Mobile Orders [111] (hidden) ---
+  e-Invoice [152] (hidden)
+  Master [17] ---
+    State Master [18]
+    City Master [19]
+    Area Master [20]
+    Vehicle Master [125] (hidden) ---
+    Customer Type Master [21]
+    Tender Master [95]
+    Special Discount Customers [119] (hidden)
+    Customer Discount Master [228] (hidden) ---
+    Sales Categories [129] (hidden)
+    Loading Charges [177]
+    Vehicle Freight Charges [130]
+    Agent Master [162] (hidden)
+  Loyalty Schemes [75] ---
+    Loyalty Programs [67]
+    Loyalty Status [79]
+    Loyalty Redemption [80] (hidden)
+    Loyalty Redemption (Item) [235] (hidden) ---
+    Loyalty Redemption Report (Item-wise) [236] (hidden)
+  Salesman Schemes [81] (hidden)
+    Salesman Target Schemes [82] (hidden)
+    Salesman Target Status [83] (hidden)
+  Offer & Schemes [66] ---
+    Promotion Scheme [247]
+  SO Check Sheet [105] (hidden) ---
+  Customer Reminders [110] (hidden)
+  Salesman Notices [120] (hidden)
+  Third Party Bills [122] (hidden)
+  Cashier Screen [131] (hidden)
+  Till [271] ---
+    Open Till [272]
+    Till Sessions [273]
+    Till Reports [288]
+    Cash Position [289]
+    Business Day [274]
+    Cash Office [287]
+    Till Masters [283] ---
+      Till Counters [275] ---
+      Till Safes [280]
+      Till Reasons [281]
+      Denominations [282]
+    Till Approval Rules [276]
+    Till Approval Authority [285]
+  Dispatch Detail [141] (hidden)
+  Dispatch - Pending Bills [147] (hidden)
+  Pick List - Sales Order [148] (hidden)
+  Agents [202] (hidden)
+    Agents Master [203]
+    Agent Groups Master [204] ---
+    Loyalty Program [205]
+    Loyalty Status [206]
+    Loyalty Transaction [212]
+    Loyalty Redemption [207]
+  Session Control [198] (hidden)
+  Bill Verification [151] (hidden)
+    Session Management [199]
+    Session Tender Details [200]
+    Session Close  [201]
+  Data Import [218] (hidden)
+    Import Customers [219] (hidden)
+    Import Invoices [220]
+  Sales Bill - Loadman [233] (hidden)
+&2 Purchase [2]
+  Suppliers [22] ---
+  Purchase Order [23] (hidden)
+  Purchase Entry [24] (hidden)
+  Purchase Return [25] (hidden) ---
+  Purchase Note [196] (hidden)
+  Shortage Receipt [195] (hidden)
+  Procurement [208] (hidden)
+    Center Master [209]
+    Farmer Master [210]
+    Rate Chart [213] ---
+    Proc Entry [211]
+    Proc Payment [214] ---
+    Proc Bank Payment [215] ---
+  Master [26]
+    Supplier Groups [27]
+    Agents Master [28] (hidden)
+    Transporters [149] (hidden)
+&3 Inventory [3]
+  Item Master [29] ---
+  Change Selling [30]
+  Change Selling (Purchase) [31] (hidden)
+  Item Group wise Discount [115] (hidden)
+  Sticker Printing [32] (hidden)
+  Custom Sticker [238] (hidden)
+  Product Kits [33] (hidden)
+  Reorder [164] (hidden)
+    Reorder - Advanced [216]
+    Reorder - Quick [46] ---
+    Reorder - Bulk Update [217]
+  Master [34]
+  Cost Price - Bulk Change [176] (hidden)
+    Item Group Master [35]
+    Item Brand Master [36]
+    item category master [240]
+    Item Section Master [37] ---
+    Unit Master [38]
+    Item Size Master [291]
+    Item Colour Master [292]
+    Godown Master [39]
+    Tax Master [40]
+    Item Qty wise Price [244]
+    Tracking Presets [249]
+  Allow to Change Master Price [178] (hidden)
+&4 Stock [4]
+  Stock Transfer [41] ---
+  Split Stock [42] (hidden)
+  Own Consumption [197] (hidden)
+  Production [43] (hidden) ---
+  Opening Stock [44]
+  Physical Stock Update [45]
+  Stock Adjustment [264]
+  Stock Transfer (Third Party) [107] (hidden)
+  Stock Exchange [145] (hidden)
+  Gate Inward Entry [170] (hidden)
+  Gate Outward Entry [173] (hidden)
+  Gate Inward Pending [171] (hidden)
+  Branch Outward [192]
+  Branch Inward [193]
+  Meat Shop [222] (hidden)
+    Daily Avg.Weigh Loss [223] (hidden)
+    Shop Inward [224] (hidden) ---
+    Meat Inward [225] (hidden)
+  Godown - Stock Dispatch [237] (hidden)
+&5 Accounts [5]
+  Ledger Groups [54]
+  Ledgers [53]
+  Opening Balances [55] ---
+  Bill-wise Receipt [99]
+  Bill-wise Payment [100]
+  Expense Voucher [277]
+  Settlement Reconciliation [278]
+  Received Cheques [51]
+  Issued Cheques [52]
+  Cheque Books [263] ---
+  Contra [104]
+  Payment Voucher [261]
+  Receipt Voucher [260]
+  Journal [103]
+  Sales (Accounting) [259]
+  Purchase (Accounting) [163]
+  Credit Note [102]
+  Debit Note [101] ---
+  Voucher Register [262]
+  Bill wise Payment (old) [49]
+  Collection Entry [187]
+  Collection Approval [188]
+  Claim Management [179]
+  Third Party Bills [185]
+&6 Reports [6]
+  Audit Logs [106]
+  Price Change Log [290]
+  Sales Reports [74] (hidden)
+    Sales Bills [76] (hidden)
+  Financial Statements [137]
+    Ledger Statement [258]
+    Account Day Summary [284]
+    Trial Balance [138] (hidden)
+    Balance Sheet [139] (hidden)
+    Profit && Loss [140] (hidden) ---
+    Profit && Loss (w/o Stock) [154] (hidden)
+    Account Group Summary [143] (hidden)
+    Ledger Monthly Summary [144] (hidden)
+    Day Book Detail [181]
+  Party Outstanding [279]
+  Statutory Reports [156] (hidden)
+    TCS Bill wise Report [158] (hidden)
+    TCS Party wise Report [157] (hidden)
+  Addl Reports [183] (hidden)
+    Dash Board [232] (hidden)
+    Monthwise Stock Balance [184] (hidden)
+    Daily Sales [186] (hidden)
+    Customer Statement [194] (hidden)
+    Tender wise Collection [234] (hidden)
+&7 Settings [7]
+  Company Master [56]
+  Branch Master [191]
+  Employee Master [57]
+  Print Settings [231] (hidden)
+  Bank Details [113] (hidden) ---
+  User Administration [58]
+  Change Password [114] (hidden)
+  Module Administration [59] ---
+  Configuration [60]
+  Templates [159]
+    SMS Configuration [61] (hidden)
+    What's App Configuration [227] (hidden) ---
+    Customer Template [160]
+    Item Template [161]
+    Printing Configuration [62]
+    Printing Assignments [248]
+    Barcode Configuration [63] (hidden)
+    Software Configuration [78] (hidden)
+    Bug Information [180] (hidden)
+    Price Level Configuration [174]
+    Software License [190] (hidden)
+    widget-master [243]
+    Charge master [245]
+    app settings [246]
+    Ledger mapping [250]
+    App Themes [266]
+    GST Providers [269]
+    GST Credentials [270]
+  Financial Year [64] (hidden)
+  Letter Pad [165] (hidden)
+  Reset Sequence [65] (hidden)
+  Export to Tally [175] (hidden)
+  Masters [69]
+    Department Master [70]
+    Designation Master [71]
+    Item User Fields [72] (hidden)
+    Contact Book [150] (hidden)
+    device list master [239]
+    Dropdown Settings [77]
+    Grid Settings [73]
+    ui- table-master [242]
+&8 Transport [8] (hidden)
+  Tripsheet [126]
+  Tyre Maintenance [134] ---
+  Fuel Log [132]
+  Service Log [133] ---
+  Service Reminders [135]
+  Vehicle Renewals [128] ---
+  Header Types [127]
+  Reports [136] (hidden)
+&9 Attendance [9] (hidden)
+  Leave Entry [84]
+  Permission Entry [89]
+  Holiday Entry [90]
+  Weekly Offs [91] ---
+  Master [85]
+    Employee Shift [86]
+    Attendance Constraint [87]
+    Devices [88]
+  Reports [92]
+    Daily Attendance [93]
+    Monthly Attendance [94]
+    Monthly Statement [108]

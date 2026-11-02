@@ -1,0 +1,33 @@
+ELSIF (iflag = 7)	--customer detail
+        THEN
+                OPEN icursor FOR
+                SELECT
+                        CASE WHEN iregional = true THEN CUST.cust_tname ELSE CUST.cust_ename END AS cust_name,
+                        CASE WHEN iregional = true THEN CUST.cust_tadd1 ELSE CUST.cust_eadd1 END AS cust_address,
+                        CASE WHEN iregional = true THEN CUST.cust_tadd2 ELSE CUST.cust_eadd2 END AS cust_place,
+                        CUST.cust_ename, CUST.cust_eadd1, CUST.cust_eadd2, CUST.cust_eadd3, CUST.cust_pin, CUST.ecommerce_gstin,
+                        CUST.gst_no, CUST.cust_id, CUST.area_id, CUST.cust_type, CUST.debit_days, CUST.freight_charge,
+                        CUST.debit_allowed, AREA.distance_km, CUST.cust_phone1, CUST.cooly, CUST.allow_promotion, CUST.unloading_charge,
+                        CUST.allow_loyalty, CUST.price_level, CUST.allow_discount, CUST.overdue_billing, CUST.cust_disc_perc,
+                        CUST.default_salesman[1] AS salesman_id, EMP.salesman_name, CUST.debit_limit,
+                        COMP.tcs_applicable AS tcs_company, CUST.gst_type, CUST.state_code,
+                        CON.contract_id, SAL.total_sales, LOYCRD.cust_points, CUST.state_name, concat((CURRENT_DATE - CUST.billed_date),' days : ', to_char(CUST.billed_date, 'dd/MM/yy')) AS billed_date,
+                        CASE WHEN CUST.itcoll_type = 'TCS' AND CUST.itcoll_exempted = false THEN true ELSE false END AS tcs_customer, true AS cust_pan,
+                        CASE WHEN CUST.state_code = COMP.state_code THEN true ELSE false END AS local_sales
+                        FROM
+                                public.customers CUST
+                                INNER JOIN public.area_master AREA ON AREA.area_id = CUST.area_id
+                                INNER JOIN public.companys COMP ON COMP.comp_id = icompany_id
+                                LEFT JOIN LATERAL (
+                                        SELECT ls_points AS cust_points
+                                                FROM public.loyaltysch_tran_hdr
+                                                WHERE ls_cust_id = isale_cust_id --AND ls_id = 1
+                                ) LOYCRD ON true                               
+                                LEFT JOIN LATERAL (
+                                        SELECT emp_name AS salesman_name FROM public.employee_master WHERE emp_id = CUST.default_salesman[1]
+                                ) EMP ON true
+                              
+                        WHERE
+                                CUST.cust_id = isale_cust_id;
+                RETURN NEXT icursor;
+

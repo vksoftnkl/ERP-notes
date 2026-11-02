@@ -1,0 +1,4 @@
+- [Live VPS: sync-migration P3009](live-vps-sync-migration-p3009.md) — VPS has no sync functions; guard sync calls in migrations; P3009 recovery steps
+- [Qt test runners: run from repo root](qt-test-runners-cwd.md) — relative include dirs; printing run.sh writes to dev server + wrong ninja; VKPOS ids
+- [Have the user run commands with `!`](user-run-commands-with-bang.md) — "ran the cmd" twice did nothing here; give `! …` and verify after
+- [Custom agents: 11, symlinked](custom-agents-symlink.md) — ~/.claude/agents -> ~/.claude-viji/agents; prefer them over general-purpose

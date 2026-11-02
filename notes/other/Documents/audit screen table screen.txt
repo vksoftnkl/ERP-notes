@@ -1,0 +1,26 @@
+audit screen table
+==================
+screen_id  int [pk]
+screen_name string
+screen_type enum[]
+screen_status boolean
+screen_created_on date wit tmz
+screen_created_by string
+screen_ modified_on date with tmz
+screen_modified_by string
+-------------------------------------------
+audit log table
+===============
+log_id uuidv7()
+log_date date wit tmz
+log_type enum[] new ,edit, delete
+log_screen_id int [fk] audit screen table screen id
+log_uiid uuid
+log_primary_name string
+log_original_record json object
+log_modified_record json object
+log_user_id uuid 
+log_branch_id uuid
+log_device_name string
+log_notes text
+

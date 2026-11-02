@@ -1,0 +1,188 @@
+- [AFTER THE MOVE — facts that win (10-29)](after-move-facts.md) — switch FINAL: all on .106 locally; Qt 6.12 ONLY (tests switched 10-29); API :3011 only (tests switched); test psql = -h…
+- [Agent team (10-29)](agent-team.md) — 11 subagents in ~/.claude-viji/agents + agent-house-rules.md; feature / minor / bug flows; settings applied 10-29; trial run…
+- [Agent Office monitor](agent-office-monitor.md) — :4000 pixel office, 12 seats = lead + 11 agents; hooks via install-hooks.sh
+- [DTO own-undefined trap](dto-own-undefined-trap.md) — hasOwnProperty on a DTO ≠ sent; `?? null` wipes; use isPresentField (10-29)
+- [START HERE — session resume](session-resume.md) — 2026-10-30 evening: printing parity committed (Qt 131b042, server 41bf7124), badges migration 170000 + React agent pending, theme v47 published 10-30
+- [Party master rules](party-master-rules.md) — 10-29 plan decided; P1 migrations applied, rest of server build running
+- [Charge distribution model](charge-distribution-model.md) — how charges spread across item lines
+- [Txn main view architecture](txn-main-view-architecture.md) — one shared txn list (TxnMainView + TxnDocTypes)
+- [Sales backend schema design](sales-backend-schema-design.md) — 3 layers, separate sale_return, generic …
+- [DB schema share location](db-schema-share-location.md) — schema .sql lives in /home/vk/Shared/Prathap
+- [Widget signal wiring rule](widget-signal-wiring-rule.md) · [Grid delegate edit pattern](grid-delegate-edit-pattern.md) — user-intent signals only; QSignalBlocker = symptom; delegate cellEdited, not table itemChanged
+- [Chip cell background](delegate-chip-background.md) · [NexDateEdit signals](nex-date-edit-signals.md) — chip cells via DelegatePaint::background; dateEdited (user) vs dateChanged (any write)
+- [GSP integration schema](gsp-integration-schema.md) — 11_gst_provider.sql multi-provider GST layer
+- [Party adjustment design](party-adjustment-design.md) — advance/credit-note set-off panel on the bill
+- [Loyalty schema design](loyalty-schema-design.md) — 12/13/14: statistical points, FIFO expiry lots
+- [Promotion schema design](promotion-schema-design.md) — 15: apply_on × benefit rule model
+- [Stock schema design](stock-schema-design.md) — 16_stock.sql engine + pricing + 16t presets
+- [Pricing ONE-table analysis](pricing-one-table-analysis.md) — why smp never ran, every ipm reader
+- [Change Selling SCREEN built](change-selling-screen-built.md) — menu 30; price-only Enter, ↑/↓ + profit line, no violet card (10-22)
+- [Stock ops map and gaps](stock-ops-map-and-gaps.md) — how each stock table gets its data
+- [Item group change warning](item-group-change-warning.md) — warn when a group change flips tracking
+- [Tracking preset dropdown](track-preset-dropdown.md) · [Tracking preset list screen](track-preset-list-screen.md) — dd 49; bare i-prefixed tokens; claude can't write dropdowns; grid 98 + menu 249, read-only
+- [Stock posting engine](stock-posting-engine.md) — 19 fn_svh_post/cancel + 20 …
+- [API endpoint docs](api-endpoint-docs.md) — Swagger https://192.168.0.106:3011/api/docs (+ /api/docs-json)
+- [Promotion engine (client)](promotion-engine-client.md) — shared/promotions + sales_promotion_binder
+- [Qt offscreen test harness](qt-offscreen-test-harness.md) — no screen capture (Wayland); link ninja objects
+- [Printing schema design](printing-schema-design.md) · [Printing UI screens](printing-ui-screens.md) — 17_printing.sql, data-driven, in public; one Designer screen, two-step create
+- [Live DB connection](db-live-connection.md) — psql -h 192.168.0.106 -U claude -d ERP; never cloudjiffy
+- [Opening stock txn list](opening-stock-txn-list.md) — menu 44 on TxnMainView, live 26/26
+- [Txn keys standard](txn-keys-standard.md) — USER-APPROVED global keys (Ctrl+N/S/Enter/O, F2, Alt+X, Esc, F1) via TxnKeys; Opening Stock done
+- [Opening stock entry UX 10-23](opening-stock-entry-ux-1023.md) — barcode=search, F4 unit, Enter stops, godown box; v31 + notes-141 LIVE
+- [Stock engine not deployed](stock-engine-not-deployed.md) — .sql engine is spec; NestJS reimplements
+- [Place of supply split](place-of-supply-split.md) — CustStcd vs PosStcd are separate facts
+- [Charge auto-apply](charge-auto-apply.md) — chgAutoApply seeds charges on quotation + bill
+- [Sale bill posting Dr/Cr](sale-bill-posting-dr-cr.md) — amounts positive + dr_cr
+- [Posting ledger schema files](posting-ledger-schema-files.md) — 19-24: roles, tax-rate/ledger split
+- [GST rate master screen](gst-rate-master-screen.md) — menu 40 + dd 51/52/53 + grid 103
+- [NexTable grid traps](nextable-grid-traps.md) — three ways a new child grid looks dead
+- [Item tax -> rate master](item-tax-to-rate-master.md) — the FK blocking item → tax_rate_master
+- [React port plans](react-port-plans.md) — where the plans live and their format
+- [Opening balance concept](opening-balance-concept.md) · [Opening balance SCREEN built](opening-balance-screen-built.md) — acc_opening_balance facts, balance-sheet only; menu 55 coded + tested live
+- [Ledger map SCREEN BUILT](ledger-map-screen-built.md) · [Ledger role map seed](ledger-role-map-seed.md) — menu 250 + ui_table 37 (plan: ledger-map-screen-plan.md); acc_ledger_map was empty, blocked posting
+- [Loaded receipt allocations](loaded-receipt-allocations.md) — /receipts/get allocations[] is history
+- [Bill adjustment REVERSES, never deletes](bill-adjustment-reverses.md) — negative counter-row
+- [Voucher Dr=Cr is enforced](voucher-balanced-check-vacuous.md) — FIXED: header totals from legs
+- [Receipt design](receipt-design.md) · [Received cheques design](received-cheques-design.md) — menu 99 REV 3, live-vs-spec divergences; menu 51, acc_pdc_register lifecycle
+- [Payment design](payment-design.md) · [Payment SCREEN built](payment-screen-built.md) — menu 100 + 52; backend built 2026-09-29; menu 100, clone of ReceiptEntry
+- [Accounts screens own-ui rule](accounts-screens-own-ui-rule.md) — each accounts screen = own .ui on NexDialog
+- [Accounting scope + voucher register](accounting-scope-register.md) — form gap list vs Tally/GoFrugal
+- [Voucher register design](voucher-register-design.md) — share/accounts/voucher_register.md rev 2; screen in src/modules/accounts/register (voucher-register-screen.md)
+- [API house conventions](api-house-conventions.md) — ONE partyId (= led_id), no /list routes
+- [TDS/TCS decided in](tcs-billwise-design.md) — tds_rates is a table; we deduct in payment
+- [Statutory masters model](statutory-masters-model.md) — four-layer Tally model for Indian law
+- [Cheques API test results](cheques-api-test-results.md) — 10 routes tested 09-17, 3 defects (receipts: receipts-api-test-results.md, 8 routes)
+- [user_menus save is a FULL REPLACE](user-menu-full-replace.md) — one grant revoked four others
+- [Re-presented cheque guards (FIXED)](represented-cheque-guard-hole.md) · [Re-present allocation (FIXED)](represent-wrong-bill.md) — notes 38/39 verified; restores originating bills incl. splits
+- [Cheque action panel is a DIALOG](cheque-panel-dialog.md) · [Cheques SCREEN built](cheques-screen-built.md) — modal; test modal-closers; menu 51 + grid 109
+- [Issued Cheques SCREEN (menu 52)](issued-cheques-screen.md) — ChequeBookDialog, P-side verbs
+- [Receipt screen revision](receipt-screen-revision.md) — 09-17 rework; ui_tables index-shift trap
+- [Ledger tax_id change](ledger-tax-id-change.md) · [Ledger type derivation](ledger-type-derivation.md) — one ledTaxId replaces three dropped keys; nature decides INCOME vs EXPENSE
+- [acc_group_master contract](acc-group-master-contract.md) — parent required, rest inherited
+- [Ledger + group tests](ledger-group-tests.md) — tests/ledger/run.sh, 61 live checks
+- [CRUD heading-row field](crud-form-heading-row-field.md) — NexCrudField::inHeadingRow()
+- [Company scope is nullable ON PURPOSE](company-scope-nullable.md) — NULL company = shared
+- [Don't re-run every suite per change](dont-test-every-change.md) — build per change, suites at the end
+- [Test-box data is not a bug list](test-box-data-not-a-bug-list.md) — box rows are never work items
+- [Ship-to addresses SCREEN](ship-to-addresses-screen.md) — on the Customer list (grid 110)
+- [Ledger/group gap analysis](ledger-master-gap-analysis.md) — 09-17 audit, 12 gaps
+- [Posted amend decision (R20)](posted-amend-decision.md) — accounts.allow_posted_amend
+- [Customer create writes the ledger](customer-creates-ledger.md) — one call, group = AREA
+- [Ledger TDS pair](ledger-tds-pair.md) — deductee type + nature of payment
+- [NestJS source snapshot (RETIRED 10-29)](nestjs-source-readonly.md) — nexerp-api-ro gone; the real server folder is local, see after-move-facts
+- [3.0 reference scope for sales txns](sales-txn-3-0-reference-scope.md) — bill/return/loyalty/e-inv only
+- [Law params are PER COMPANY](law-params-per-company.md) — thresholds via statutory limits per company
+- [Sales txn plan set](sales-txn-plan-set.md) — share/sales + share/gst + 29/30/31
+- [Re-tender design](retender-design.md) — change how a posted bill was paid
+- [Transport band is ONE shared table](transport-band-shared-table.md) — txn_transport_detail (33)
+- [Salesman array decision](salesman-array-decision.md) — uuid[] on five sales headers
+- [Offline sync invariants](offline-sync-invariants.md) — no CHECK on a contended resource
+- [SQL vs NestJS rule](sql-vs-nestjs-rule.md) — NO DB functions/triggers; CHECKs/indexes stay
+- [Temp credit design](temp-credit-design.md) — TEMP_CR tender, acc_temp_credit (31), grid 132, notes 90
+- [Six-txn controls + void/session](six-txn-controls.md) — barcode, scan-to-load, one lifecycle …
+- [DC screen BUILT](dc-screen-built.md) — menu 182, ui_table 38 / grid 116
+- [Sale bill screen upgrade](sale-bill-upgrade.md) — plan §1 all built 09-23
+- [Verify against the artefact](verify-against-artefact.md) — read the live response before coding
+- [Grid runner binding rules](grid-runner-binding-rules.md) — always send every optional token
+- [Quotation save 500](quotation-save-500.md) — sqSalesmanId uuid vs uuid[]
+- [Shared payload, per-DTO keys](shared-payload-per-dto-keys.md) — bill + quotation differ
+- [Shipping dialog](shipping-dialog.md) — shared .ui popup replaced the band
+- [Sale bill party rules](sale-bill-party-rules.md) — beat filters customers (dd 58)
+- [Sale bill live test](sale-bill-live-test.md) — tests/salebill/run-full.sh, ZT- data
+- [Bill vs ledger reconcile](bill-ledger-reconcile.md) — trial-mode post check
+- [Ledger statement report](ledger-report-mockup.md) — share/report/ mockup + 7 routes
+- [Party outstanding report](party-outstanding-mockup.md) — share/report mockup + backend + React plans 10-09; 4 server findings
+- [Charge master tax rate](charge-master-tax-rate.md) — chgTaxId on ChargeEntry (dd 36)
+- [Cleared CRUD numbers: blankAs](crud-blank-number-dropped.md) — NexCrudField::blankAs()
+- [New module = own URLs](new-module-own-urls.md) — never reuse old route families
+- [React sale bill plan](react-sale-bill-plan.md) — plan-react-sale-bill.md REV 2 + add-ons
+- [Item masters audit 09-30](item-masters-audit.md) · [Item master audit](item-master-audit.md) — menu 34 masters; grids 45/50/67 broken; 10-21 audit: grid 17 junk rows removed, null-clears + 10 client…
+- [Unit factor direction bug](unit-factor-direction-bug.md) — CLOSED 10-27: factors re-derived live, OPN0006 cancelled (left so)
+- [Item base unit lock](item-base-unit-lock.md) · [Item price profit rule](item-price-profit-rule.md) — new item: base = last row auto; saved: base locked; notes-138 A1+A2…; Profit % on cost WITHOUT tax; Profit Type hidden; bucket-row lock on…
+- [Item default barcode](item-default-barcode.md) · [Item copy from](item-copy-from.md) — Barcode field = default EAN row (base unit); billing scans EAN table…; "Copy from Item" on new items (no code/barcodes/photo); template …
+- [Widget config on .ui screens](widget-config-ui-screens.md) — form_section/form_field Desktop; fieldKey/sectionKey props; item card menu 29 first
+- [Item masters full test](item-masters-full-test.md) — tests/itemmasters suite; notes-139 LIVE + verified 10-22 (C1/C2 open)
+- [Plans: separate file](plans-separate-file.md) — never revise a share plan in place
+- [Register cheques design](register-cheques-design.md) — RcpV + PmtV cheques built
+- [Share truncation 2026-09-24](share-truncation-2026-09-24.md) — 14 of 18 files restored
+- [Stock backend gap audit](stock-backend-gap-2026-09-26.md) — NestJS stock built vs pending
+- [Textile lot barcode](textile-lot-barcode.md) — 10-24: opening Size/Colour/Model LIVE (notes-149 verified 37/37); physical label scan + Item text live
+- [Grid line keys +/-](grid-line-keys-plus-minus.md) — bare +/- add/remove lines
+- [Popup Enter rule](popup-enter-navigation-rule.md) — every popup: EnterNavigation::install()
+- [Print CANVAS build](print-canvas-build.md) · [Print Designer parity](print-designer-parity.md) — 13 steps, all built; menu 62 web parity
+- [Print Assignments SCREEN](print-assignments-screen.md) · [Document print BUILT](document-print-built.md) — menu 248; print dialog + server PDF preview
+- [Print designer port analysis](print-designer-port-analysis.md) — plan-qt-printing-port.md
+- [Stock Adjustment SCREEN built](stock-adjustment-screen-built.md) · [Physical stock live check](physical-stock-live-check.md) — menu 264; 10-24 reworked like Opening (F2=Edit, F12=pick), theme v35…; 10-24 reworked like Opening; notes-150 LIVE + verified; textile scan…
+- [Mockup fidelity](mockup-fidelity.md) — an approved PNG is the visual spec
+- [Company + Branch masters audit](company-branch-masters-audit.md) · [Company main branch (notes 78)](company-main-branch.md) — grids 52/56 re-registered; seed-on-create awaits Prathap
+- [API grid bool pills + stretch](api-grid-bool-chips-stretch.md) — bool pills; widths are %
+- [Company stylesheet (3.0 vs NexERP)](company-stylesheet-3-0.md) — theme routes live; next Qt ThemeManager
+- [Shared item company](shared-item-company.md) — blank item company = every company; notes 73
+- [Theme template decision](theme-template-decision.md) — one DB QSS template + tokens; v30 live 10-22 (Qty-wise Price block)
+- [Current line marker](current-line-marker.md) — NexTable paints row tint + bordered cell
+- [Theme master SCREEN built](theme-master-screen.md) — menu 266, grid 125; ninja not on PATH
+- [Sale bill NEW LAYOUT — REVOKED](sale-bill-new-layout.md) — ask WHY before more layout work
+- [Grid look = theme only](grid-look-theme-only.md) — alt rows/gutter/corner from the template
+- [dist bundle](dist-bundle.md) — scripts/deploy-linux.sh from the debug build
+- [GSP masters](gsp-masters-blocked.md) — routes R1–R9 + menus 269/270 live; screens next
+- [Txn History dialog](txn-history-dialog.md) — Ctrl+H, grid 126, notes 80
+- [GSTIN fetch buttons](gstin-fetch-buttons.md) — 5 masters via /gst/search; 503 when provider off
+- [Party dual role](party-dual-role.md) — customer↔supplier one ledger; notes 81/82 live
+- [GST_CRED_KEY missing](gst-cred-key-missing.md) — notes 82/83/87/88 done and live
+- [Txn line audit design](txn-line-audit-design.md) — before/after snapshot diff; opening stock built
+- [Loyalty Status mockup](loyalty-status-mockup.md) — menu 79 built; v17 seed unpublished
+- [Lot cost valuation](lot-cost-valuation.md) — notes 92 REV 3, server pending
+- [Stock section is mine](stock-section-ownership.md) — decide stock designs myself
+- [Sale bill MRP picker](sale-bill-mrp-picker.md) — several-MRP popup; tests/mrpbucket 13/13
+- [Sale bill godown selector](sale-bill-godown-selector.md) — header ddGodown, remembered per branch
+- [Till management design](till-management-design.md) — TILL_DESIGN.md + 47/48/49 LIVE 2026-10-08 + mockups
+- [Draft/Post rights rule](draft-post-rights-rule.md) — Create=draft, Post=post; notes 106 LIVE 10-12: one-call post:true on 6 screens
+- [Counter screen analysis](counter-screen-analysis.md) — Counter module inside NexERP; open Qs hardware/offline
+- [Non-cash tender control](noncash-tender-control.md) — card/UPI by machine; 49 LIVE 2026-10-08; 3 user Qs
+- [Till operator → user/employee](till-operator-to-user-employee.md) — dropped; notes 95 live; Qt fields built; tests/staffledger 35/35 + 24/24
+- [Till masters = 4 screens](till-masters-screen.md) — 275/280/281/282 NexCrud lists + popups, live 58/58; Edit on shipped = company copy; grid 134 has 5 readers
+- [S1 Open Till Session](till-open-session-screen.md) · [S4 End Shift](till-end-shift-screen.md) — menu 272 built + live 10-09; Force close on S1 live 10-17 (15/15)…; built + live 10-09; from Open Till; next S3
+- [S3 Cash Movement](till-cash-movement-screen.md) · [S6 Till Sessions list](till-sessions-list-screen.md) — notes-110 10-13: two signatures at the counter (cashier + supervisor…; menu 273, grids 144/145; live sessions + cash in tills line…
+- [S5 Session Cockpit](till-session-cockpit-screen.md) · [Business Day 274](till-business-day-screen.md) — Enter on 273; grids 146-148; Change… + Void movement built 10-15…; Day Open + checklist; grids 149/150; v21 LIVE; next 276
+- [Approval Rules 276 + Authority 285](till-approval-setup-screen.md) — split 10-13: 285 list+popup (notes-111 LIVE); 276 rules only
+- [Expense Voucher 277](expense-voucher-screen.md) — NexTable grids; clears after save; Cancel & re-enter built 10-12; notes-104 fixed + verified (GST re-post works)
+- [Grid entry = delegate](grid-entry-delegate-preference.md) — NexTable + delegate + popup cells, never setCellWidget
+- [Settlement screens 278](settlement-screens.md) — built + live-tested 10-09 incl. write-off; picker grid 154, income dd 69; v25 LIVE
+- [Till lives in the Counter screen](till-lives-in-counter-screen.md) · [Till build review notes 97](till-build-review-notes-97.md) — no till strip/menu on office screens; 10-08 review of full till build; tdSettleStatus + hidden-menu rights…
+- [Account Day Summary mockup](account-day-summary-mockup.md) — share/report mockup + backend + React plans 10-12; nothing built; tender-ledger findings
+- [NexDialog on the stack crashes](nexdialog-stack-crash.md) — WA_DeleteOnClose; 7 till sites fixed 10-12
+- [Till approval gate](till-approval-gate-missing.md) — server gate LIVE; Qt inbox (273 button) + request popup (277, 272) BUILT 10-16; Payment 100 LIVE 10-17 (12/12, REFUSE as…
+- [User rights: groups follow screens](user-menu-groups-follow.md) — ticking a screen ticks its group; VKSOFT has 6 orphan screens
+- [Receipt tender surcharge](receipt-tender-surcharge.md) — UPI/card 1% INSIDE the tender: 200→202.00 (fixed 10-16, server + Qt)
+- [Till hand-over receipt](till-handover-receipt.md) — notes-114 Approve Cash on the Cockpit LIVE 10-14 (API 16/16, screen 12/12); Cash Office retired
+- [Times are AM/PM](time-format-ampm.md) — user rule: 12-hour everywhere shown; grid SQL HH12:MI AM, Qt hh:mm AP
+- [e2e deletes live till events](e2e-deletes-live-till-events.md) — Prathap's test cleanup wipes a business day's till_event; notes-115 asked
+- [Simple error messages](simple-error-messages.md) — plain English + grey server line; till wording coded 10-15 (api_error_text.cpp); others need codes from Prathap
+- [Cash Office 287](till-cash-office-287.md) — notes 118 screen built 10-15 (fake-data 13/13); grids 157/158; 118+119+120 LIVE 10-15, live_safe 12/12
+- [Counter never blocked (269ST on hold)](counter-never-blocked-269st.md) — legal cash checks must not stop billing; notes 123 on hold, later WARN-only
+- [User Role = till levels](user-role-till-levels.md) — 10-16 one list of names; 285 Level pre-fills from role; User Admin combo waits for notes-125
+- [Tender on every money line](tender-on-every-money-line.md) — 10-16 Day Book by tender; notes-130 LIVE; 10-17 RcpV/PmtV By line = tender menu (money126 14/14)
+- [Counter screen deferred](counter-screen-deferred.md) — 10-17 user: skip Counter/Till mode until sales return exists
+- [Till Reports screen](till-reports-mockup.md) — 10-17 grids 159–169 + 175–180 (performance, ledger check, tender recon), 7 tabs, snap 13/13; menu 288
+- [Grid SQL: no comments](grid-sql-no-comments.md) — runner 400s on any comment; popup shows Records 0
+- [HO Cash Position S11](ho-cash-position-s11.md) — 10-17 menu 289 registered, HO review popup LIVE 15/15 (real save)
+- [Till printouts notes 135](till-printouts-notes-135.md) — LIVE 10-17: slip published + buttons; remit memo draft, no REMIT to render
+- [Void bill design](void-bill-design.md) — REV 2 (no approval, sale bill only); notes-136 asked 10-17
+- [Bank details popup](bank-details-popup.md) — supplier/ledger bank grid is a list; add/edit in NexBankAccountDialog
+- [NexDateEdit keys + calendar](nex-date-edit-keys.md) — ↑/↓ ±1 day; cleaned calendar popup
+- [Price change log design](price-change-log-design.md) · [Quick rate change design](quick-rate-change-design.md) — APPROVED 10-23: new table incl. qty slabs; notes-144; server first; Ctrl+R popup BUILT 10-23, live 22/22, uncommitted; notes-146 live
+- [Qty-wise Price redesign](qty-price-screen-redesign.md) — menu 244 slabs + panel (10-22); theme v30 then (v32 live 10-23)
+- [Prev/Next walk order](txn-adjacent-walk-order.md) — /txn/adjacent orders by per-device slno; notes-152 sent 10-24
+- [Godown/Branch transfer SCREENS](godown-transfer-screen.md) — 41/192/193 live; notes-160 LIVE 10-27 (recall on, D-codes); 10-27 UI asks uncommitted
+- [Commit straight to main](feedback-commit-to-main.md) — user commits on main; no feature branch
+- [UI batch 10-26](ui-batch-2026-10-26.md) — all 9 done: 091bf5b + fc00b9e, v39; menus restructured live (notes-158)
+- [Stock small masters](stock-small-masters.md) — Reasons 293, Ageing Slabs 294, Track Presets 249 editing all BUILT + live (d27045b)
+- [Purchase module](purchase-module-analysis.md) — plans in share/purchase; build state + 10-29 fidelity rebuild in [purchase-module-build.md](purchase-module-build.md)
+- [Prathap server access](prathap-server-access.md) — SSH .106; work in his folder on DEV-v1 as-is, commit only my files by path; migrations after user OK; since 10-29 local…
+- [WhatsApp click-to-chat](whatsapp-click-to-chat.md) — Sale Bill button BUILT 10-27: wa.me + bill PDF on clipboard (Ctrl+V); uncommitted
+- [Move to Prathap PC](move-to-prathap-pc.md) — 10-28 checklist + PNG in share move/; share master = .106, sshfs-mounted at same path (not in fstab — remount after reboot)…
+- [Printing parity 10-30](printing-parity-2026-10-30.md) — voucher prints, print log/share, ledger 258 + outstanding 279, designer features, kEditPublishedInPlace, menu 62 on grid 'MAIN LIST - PRINT TEMPLATES' (by name)
+- [Live VPS: sync-migration P3009](live-vps-sync-migration-p3009.md) — VPS has no sync functions; guard sync calls in migrations; P3009 recovery; check for a running deploy.sh first
+- [Qt test runners: run from repo root](qt-test-runners-cwd.md) — relative include dirs; printing run.sh writes to dev server; Qt ninja 1.12 vs 1.13
+- [Have the user run commands with `!`](user-run-commands-with-bang.md) — "ran the cmd" twice did nothing; give `! …` and verify after
+- [Prathap profile: agents + hooks (10-30)](prathap-profile-agents-hooks.md) — plain `claude` = Prathap's ~/.claude; got the agents symlink + office hooks; start claude-viji

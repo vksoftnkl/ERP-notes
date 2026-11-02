@@ -1,0 +1,2 @@
+GET /api/v1/app-setting-values/resolve?companyId=019c8ea6-19e9-78a8-b15f-749e1cde7292&branchId=019c8ea7-b0f5-72d5-96a5-1abfc80cc8ab&deviceId=019e4a9a-d6a5-7c67-96c7-ce4aec61060e&userId=019e44fb-5d08-7b17-ad05-9e519f179708
+

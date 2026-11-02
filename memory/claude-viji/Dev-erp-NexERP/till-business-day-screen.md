@@ -1,0 +1,16 @@
+---
+name: till-business-day-screen
+description: Business Day (menu 274) BUILT 2026-10-09 — Day Open live, client-side checklist, grids 149/150; Day Close waits for the server; template v21 (unpublished)
+metadata:
+  type: project
+---
+**Files:** src/modules/sales/till/day/till_business_day_entry.{h,cpp,ui} (.ui from share/till/preview/gen_s8_ui.py), fm.reg<TillBusinessDayEntry>(274). ApiEndpoints::Till::DayOpen / DayGet.
+**Server today:** only POST /till/days/open (idempotent: "already open") and GET /till/days/get (today, or tbdId+accYear; 404 = not opened). NO close-check / close / reopen → Close day, Close with exception, Cancel closing greyed; Print day X greyed (no template).
+**Grids (share/grids/till_sessions_registration.py):** 149 MAIN LIST - TILL BUSINESS DAYS (List tab, 90 days, Enter loads the day), 150 TILL DAY SESSIONS (grid 144's SQL, slim S8 columns; one date as from+to; Enter → cockpit modal). Safes from grid 136 (balance vs insured → Remittance check).
+**Checklist = the client's reading, labelled so:** RED live session (Open cockpit), AMBER counted-not-closed / pending approval, Remittance (safe > insured), LATER rows for S9 bag/safe count and the missing server close-check. Verdict band READY / n AMBER / n RED. Numbers panel built in code (sales, cash in tills from CLOSED sessions, each safe, exceptions).
+**Checked live 10-09:** 8 closed → READY; opened ZT1-261009-09 → 1 RED with Open cockpit; closed it (Z 9) → READY. Day Open route verified ("already open"). Harness SNAP_SRC=snap_day [SNAP_TAG]. Template block → share/theme/seed-template-v21.qss = live v20 + TillBusinessDayEntry block (md5 770dd78a), PUBLISHED by the user 10-09 13:01 (live verified).
+**Next (agreed order):** Approval rules / authority (276) → Expense voucher (277) → settlement screens.
+
+**2026-10-14 (user: "the bottom list doesn't show which session waits, I have to go to Till Sessions and back"):** grid 150 (TILL DAY SESSIONS) re-registered from till_sessions_registration.py — its SQL was a COPY of 144's taken at registration, so it drifts whenever 144 changes; re-apply 150 after any 144 change. Now has the Cash column (cash_receipt pills) and its own ORDER BY putting TO APPROVE / PENDING_APPROVAL / tss_variance_status PENDING first. Checklist "Cash to approve" → "Open cockpit →" on the oldest TO APPROVE row of the day (Till Sessions only for earlier days). Verdict bar now names the red checks instead of a fixed "live session nobody counted" sentence. Removed stale "approval gate is phase 3" text.
+
+**notes-117 BUILT 2026-10-14 (server live):** checklist = GET days/close-check (items{code,tone,count,detail,sessionIds}, canClose, canCloseWithException; fallback to the screen's own reading on failure). F10 Close day (POST days/close, reads data.tbdZNo), Close with exception (day/till_day_exception_dialog.*: DAY_CLOSE reason, approver from /till/movements/supervisors minus caller + their PIN, one TillDenomCount per SESSIONS_LIVE session), Reopen day (day/till_day_reopen_dialog.*, was "Cancel closing"). Probes tests/till/probe_day_exception.cpp (read-only). **A real days/close + reopen has NOT been run** — it closes the user's live day; ask before testing (needs a DAY_REOPEN AREA_MANAGER approver ≠ closer).

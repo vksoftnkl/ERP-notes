@@ -1,0 +1,825 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+--  NexERP backend — 19: STOCK POSTING
+--
+--      stock.fn_svh_txn_map        voucher type   → ledger type + direction
+--      stock.fn_svh_post           stock_voucher  → stock_ledger
+--      stock.fn_svh_cancel         posted voucher → reversing rows
+--      stock.fn_svi_post_lock      a posted document is history
+--      stock.fn_svh_post_lock      …and so is its header
+--
+--  Requires PostgreSQL 18+ (uuidv7()).  Run order: … → stock/16 → 17 → 18 → stock/19.
+--  Lives in schema/stock/ — see the README.md there.
+--  Re-runnable: every object is CREATE OR REPLACE / IF NOT EXISTS.
+--
+--  ── Why this file exists ─────────────────────────────────────────────────
+--  16_stock.sql builds the whole engine — the lot, the ledger, the balance
+--  cache, the moving average, and stock_voucher/stock_voucher_item, the one
+--  document that covers every movement that is not a sale. Then it stops.
+--  There is no function anywhere that turns a voucher into ledger rows.
+--  §17 of that file has fn_svh_recompute (header totals) and nothing else
+--  that touches a voucher.
+--
+--  So a branch can key an Opening Stock entry and it sits at DRAFT for ever,
+--  and NOTHING IN THE CHAIN CAN BRING STOCK IN. That gap — not a missing
+--  table — is why opening stock feels unimplemented. This file closes it.
+--
+--  ── Opening stock is not a table ─────────────────────────────────────────
+--  It is svh_voucher_type = 'OPENING' posting sml_txn_type = 'OPENING' rows,
+--  exactly as 16 §8 argues. The legacy system had opening_stock_header,
+--  physical_stock_header and tmp_brtrfs, each with its own line table and its
+--  own subtly different batch columns, and every report had to UNION them.
+--  stock_voucher_item already carries every column the legacy osl_ line had
+--  except the four selling-price levels, and those belong in
+--  inventory.item_price_master, not on a stock document.
+--
+--  ── What this file does NOT touch ────────────────────────────────────────
+--  Not one ALTER, not one DROP. The Prisma-owned tables named in the header
+--  of 16_stock.sql — inventory.item_stock_ledger / _balance / item_batch_*,
+--  stock.opening_stock_header/_detail, stock.physical_stock_* — are left
+--  exactly as they are. No new tables, therefore no new column prefix and no
+--  new partitions: stock.fn_create_stock_partitions needs no re-run.
+--
+--  ── What it deliberately leaves out ──────────────────────────────────────
+--  TRANSFER_OUT, TRANSFER_IN, REPACK_IN and REPACK_OUT are REFUSED by name.
+--  A transfer is not one document's worth of ledger rows; it is a pair of
+--  documents with stock_transit in between, and half-posting one is worse
+--  than refusing it. They belong in the file that wires stock_transit.
+--
+--  There is no accounting posting. svh_link_src_module/_doc_type/_doc_id/
+--  _acc_year can carry a link to an acc_voucher_header with no schema
+--  change if that is wanted later. Note this IS a behaviour change from the
+--  legacy table, where osh_voucher_id was a mandatory FK to the accounting
+--  voucher: it is deliberate, not an oversight.
+--
+--  And no selling prices. An opening line records quantity and cost. MRP and
+--  sale price are captured only because stock_lot may need them for lot
+--  identity; inventory.item_price_master stays the Item Price screen's job.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §1  fn_svh_txn_map — what a voucher line becomes in the ledger.
+--
+--  stock_voucher_item has no direction column, on purpose: a line records
+--  a quantity, and a quantity is a magnitude. Which way it moves is a
+--  property of the DOCUMENT, and for two types a property of the reason or
+--  the count. That resolution lives here, in one function, so that
+--  fn_svh_post and the pre-post validation query in 19q cannot disagree
+--  about what a document is going to do.
+--
+--      voucher type      ledger type                  direction
+--      ─────────────     ──────────────────────────   ─────────
+--      OPENING           OPENING                      +1
+--      RECEIPT           PURCHASE                     +1
+--      ISSUE             ADJUST_MINUS, or the one     −1
+--                        type the reason names
+--      ADJUSTMENT        ADJUST_PLUS / ADJUST_MINUS   from the reason
+--      DAMAGE            DAMAGE                       −1
+--      EXPIRY_WRITEOFF   EXPIRY_WRITEOFF              −1
+--      PHYSICAL          PHYSICAL_PLUS / _MINUS       from the count
+--
+--  RECEIPT posts as PURCHASE because that is what it is — goods arriving
+--  from a supplier — and a purchase module arriving later must not have to
+--  reclassify the history raised before it existed.
+--
+--  ADJUSTMENT with a reason of direction BOTH raises. 'Damaged' can be an
+--  in or an out depending on who wrote the reason row, and a document that
+--  cannot say which way it moved is not a document.
+--
+--  PHYSICAL with a zero difference returns NO ROW. That is the signal to
+--  skip the line: a count that agrees with the book is not a movement, and
+--  ck_sml_qty_nonzero would refuse it anyway.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION stock.fn_svh_txn_map(
+    p_voucher_type character varying,
+    p_reason_id    uuid    DEFAULT NULL,
+    p_diff_qty     numeric DEFAULT NULL)
+RETURNS TABLE (txn_type character varying(30), direction smallint)
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    v_reason_dir   character varying(10);
+    v_reason_types text[];
+BEGIN
+    IF p_reason_id IS NOT NULL THEN
+        SELECT srm_direction, srm_allowed_txn_types
+          INTO v_reason_dir, v_reason_types
+          FROM stock.stock_reason_master
+         WHERE srm_id = p_reason_id
+           AND srm_is_deleted = false;
+    END IF;
+
+    CASE p_voucher_type
+    WHEN 'OPENING' THEN
+        RETURN QUERY SELECT 'OPENING'::character varying(30), 1::smallint;
+
+    WHEN 'RECEIPT' THEN
+        RETURN QUERY SELECT 'PURCHASE'::character varying(30), 1::smallint;
+
+    WHEN 'DAMAGE' THEN
+        RETURN QUERY SELECT 'DAMAGE'::character varying(30), (-1)::smallint;
+
+    WHEN 'EXPIRY_WRITEOFF' THEN
+        RETURN QUERY SELECT 'EXPIRY_WRITEOFF'::character varying(30), (-1)::smallint;
+
+    WHEN 'ISSUE' THEN
+        -- srm_allowed_txn_types exists to filter a dropdown. When it names
+        -- exactly one outward type — SAMPLE_ISSUE, GIFT_ISSUE — the reason
+        -- has already said what this issue is, so believe it.
+        IF v_reason_types IS NOT NULL
+           AND array_length(v_reason_types, 1) = 1 THEN
+            RETURN QUERY SELECT v_reason_types[1]::character varying(30),
+                                (-1)::smallint;
+        ELSE
+            RETURN QUERY SELECT 'ADJUST_MINUS'::character varying(30),
+                                (-1)::smallint;
+        END IF;
+
+    WHEN 'ADJUSTMENT' THEN
+        IF v_reason_dir IS NULL THEN
+            RAISE EXCEPTION
+                'an ADJUSTMENT must cite a reason from stock_reason_master'
+                USING ERRCODE = 'not_null_violation';
+        ELSIF v_reason_dir = 'IN' THEN
+            RETURN QUERY SELECT 'ADJUST_PLUS'::character varying(30), 1::smallint;
+        ELSIF v_reason_dir = 'OUT' THEN
+            RETURN QUERY SELECT 'ADJUST_MINUS'::character varying(30), (-1)::smallint;
+        ELSE
+            RAISE EXCEPTION
+                'reason % is direction BOTH; an adjustment must say which way it moved',
+                p_reason_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+
+    WHEN 'PHYSICAL' THEN
+        IF COALESCE(p_diff_qty, 0) > 0 THEN
+            RETURN QUERY SELECT 'PHYSICAL_PLUS'::character varying(30), 1::smallint;
+        ELSIF COALESCE(p_diff_qty, 0) < 0 THEN
+            RETURN QUERY SELECT 'PHYSICAL_MINUS'::character varying(30), (-1)::smallint;
+        END IF;
+        -- zero difference: no row, and the caller skips the line.
+
+    ELSE
+        RAISE EXCEPTION
+            'voucher type % cannot be posted by fn_svh_post', p_voucher_type
+            USING ERRCODE = 'feature_not_supported';
+    END CASE;
+END $$;
+
+ALTER FUNCTION stock.fn_svh_txn_map(character varying, uuid, numeric)
+    OWNER to postgres;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §2  fn_svh_post — the function 16_stock.sql is missing.
+--
+--  Turns a DRAFT stock_voucher into stock_ledger rows and flips it to
+--  POSTED. Returns how many rows it wrote.
+--
+--  It does the four things the posting checklist at the end of
+--  16_stock_ledger_columns.md lists, and nothing else — everything after the
+--  INSERT is already somebody's job:
+--
+--      fn_sml_cost_default   stamps COGS on an outward left at rate 0
+--      fn_sml_apply          stock_balance, slt_total_on_hand + status,
+--                            stock_item_cost and the branch-wide revalue,
+--                            and the stp_allow_negative policy
+--      fn_sml_immutable      refuses any later edit
+--      fn_svh_recompute      the header totals
+--
+--  ── Idempotency is the index's job, not a flag's ─────────────────────────
+--  ux_sml_source is unique over (company, branch, acc_year, module,
+--  doc_type, doc_id, line_no, split_no, godown, lot, direction) where the
+--  row is neither deleted nor a reversal. A retry after a timeout, or a sync
+--  replaying a day, CANNOT move stock twice. The DRAFT check below is the
+--  friendly error; that index is the guarantee.
+--
+--  ── Cost, and why an inward at zero raises ───────────────────────────────
+--  On an outward the rate is deliberately left alone: fn_sml_cost_default
+--  applies the item's valuation policy, and it knows better than a screen.
+--  On an INWARD nothing fills it — and an OPENING line posted at rate 0
+--  silently drags the branch's moving average toward zero for every future
+--  sale of that item. So an inward with quantity and no cost raises, after
+--  svh_rate_source has been given its chance. A line that is entirely FREE
+--  goods is exempt: free stock genuinely cost nothing.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION stock.fn_svh_post(
+    p_voucher_id uuid,
+    p_acc_year   character(9),
+    p_posted_by  uuid DEFAULT NULL)
+RETURNS integer
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v            record;
+    ln           record;
+    v_lot        uuid;
+    v_txn        character varying(30);
+    v_dir        smallint;
+    v_qty        numeric(18,6);
+    v_base_qty   numeric(18,6);
+    v_free       numeric(18,6);
+    v_free_base  numeric(18,6);
+    v_total_base numeric(18,6);
+    v_rate       numeric(18,6);
+    v_rate_wot   numeric(18,6);
+    v_reason     uuid;
+    v_supplier   uuid;
+    v_lot_mrp    numeric(18,6);
+    v_lot_batch  character varying(100);
+    v_lot_expiry date;
+    v_lines      integer := 0;
+    v_rows       integer := 0;
+BEGIN
+    SELECT * INTO v
+      FROM stock.stock_voucher
+     WHERE svh_id       = p_voucher_id
+       AND svh_acc_year = p_acc_year
+       FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'stock voucher % / % not found', p_voucher_id, p_acc_year
+            USING ERRCODE = 'no_data_found';
+    END IF;
+
+    IF v.svh_is_deleted THEN
+        RAISE EXCEPTION 'voucher % is deleted', v.svh_refno
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+
+    IF v.svh_status <> 'DRAFT' THEN
+        RAISE EXCEPTION
+            'voucher % is %; only a DRAFT voucher can be posted',
+            v.svh_refno, v.svh_status
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+
+    -- A transfer is a PAIR of documents with stock_transit between them.
+    -- Posting one half of it is worse than refusing the whole thing.
+    IF v.svh_voucher_type IN ('TRANSFER_OUT', 'TRANSFER_IN',
+                              'REPACK_IN', 'REPACK_OUT') THEN
+        RAISE EXCEPTION
+            '% does not post here: TRANSFER_OUT goes through stock.fn_svh_post_transfer and TRANSFER_IN through stock.fn_svh_receive_transfer (file 20); REPACK_* is not built yet',
+            v.svh_voucher_type
+            USING ERRCODE = 'feature_not_supported';
+    END IF;
+
+    -- An OPENING must say where the stock lands. ck_svh_godowns only asks
+    -- for one of the two godowns, which an ISSUE satisfies with from_godown.
+    IF v.svh_voucher_type = 'OPENING' AND v.svh_to_godown_id IS NULL THEN
+        RAISE EXCEPTION 'an OPENING voucher must name svh_to_godown_id'
+            USING ERRCODE = 'not_null_violation';
+    END IF;
+
+    FOR ln IN
+        SELECT *
+          FROM stock.stock_voucher_item
+         WHERE svi_voucher_id = p_voucher_id
+           AND svi_acc_year   = p_acc_year
+           AND svi_is_deleted = false
+         ORDER BY svi_line_no, svi_split_no
+    LOOP
+        v_lines    := v_lines + 1;
+        v_reason   := COALESCE(ln.svi_reason_id, v.svh_reason_id);
+        v_supplier := COALESCE(ln.svi_supplier_id, v.svh_supplier_id);
+
+        -- ── What it becomes in the ledger ────────────────────────────────
+        SELECT m.txn_type, m.direction
+          INTO v_txn, v_dir
+          FROM stock.fn_svh_txn_map(v.svh_voucher_type, v_reason,
+                                    ln.svi_diff_qty) m;
+
+        -- PHYSICAL, counted and agreed. Not a movement.
+        IF v_txn IS NULL THEN
+            CONTINUE;
+        END IF;
+
+        -- ── Quantity, always as a magnitude ──────────────────────────────
+        IF v.svh_voucher_type = 'PHYSICAL' THEN
+            -- Only the difference posts. The book and counted figures stay
+            -- on the line so the variance can be defended a year later.
+            v_qty       := abs(ln.svi_diff_qty);
+            v_base_qty  := abs(ln.svi_diff_qty) * ln.svi_to_base_factor;
+            v_free      := 0;
+            v_free_base := 0;
+        ELSE
+            v_qty       := ln.svi_qty;
+            v_base_qty  := ln.svi_base_qty;
+            v_free      := ln.svi_free_qty;
+            v_free_base := ln.svi_free_base_qty;
+
+            -- A screen that filled the keyed quantity and left base at 0
+            -- would otherwise post a movement of nothing.
+            IF v_base_qty = 0 AND v_qty <> 0 THEN
+                v_base_qty := v_qty * ln.svi_to_base_factor;
+            END IF;
+            IF v_free_base = 0 AND v_free <> 0 THEN
+                v_free_base := v_free * ln.svi_to_base_factor;
+            END IF;
+        END IF;
+
+        v_total_base := v_base_qty + v_free_base;
+
+        IF v_total_base <= 0 THEN
+            RAISE EXCEPTION
+                'line %/% of voucher % has no quantity',
+                ln.svi_line_no, ln.svi_split_no, v.svh_refno
+                USING ERRCODE = 'check_violation';
+        END IF;
+
+        -- ── The lot ──────────────────────────────────────────────────────
+        -- A client that let the user pick a batch has already resolved it.
+        -- Otherwise fn_slt_resolve finds or creates it, blanking whatever
+        -- stock_track_policy does not track first. Nothing else in the
+        -- system may INSERT into stock_lot.
+        v_lot := ln.svi_lot_id;
+
+        IF v_lot IS NULL THEN
+            v_lot := stock.fn_slt_resolve(
+                v.svh_company_id,
+                ln.svi_item_id,
+                ln.svi_base_uom_id,
+                v.svh_branch_id,
+                ln.svi_batch_no,
+                ln.svi_mfg_date,
+                ln.svi_expiry_date,
+                ln.svi_mrp,
+                ln.svi_sale_price,
+                ln.svi_serial_no,
+                v_supplier,
+                ln.svi_cost_rate,
+                ln.svi_cost_rate_wot,
+                v.svh_doc_date,
+                'STOCK', 'STOCK_VOUCHER', v.svh_id, v.svh_acc_year, v.svh_refno,
+                COALESCE(p_posted_by, v.svh_created_by));
+        END IF;
+
+        SELECT slt_mrp, slt_batch_no, slt_expiry_date
+          INTO v_lot_mrp, v_lot_batch, v_lot_expiry
+          FROM stock.stock_lot
+         WHERE slt_id = v_lot;
+
+        -- ── One opening per holding per year ─────────────────────────────
+        -- ux_sml_source stops the SAME document posting twice; it cannot
+        -- stop a SECOND opening document for the same holding, because the
+        -- doc ids differ. And this cannot be a unique index either: the
+        -- rule has to ignore an opening that was later reversed, and a
+        -- partial index predicate cannot see another row. So it lives here.
+        IF v_txn = 'OPENING' AND EXISTS (
+               SELECT 1
+                 FROM stock.stock_ledger l
+                WHERE l.sml_company_id = v.svh_company_id
+                  AND l.sml_branch_id  = v.svh_branch_id
+                  AND l.sml_acc_year   = p_acc_year
+                  AND l.sml_godown_id  = ln.svi_godown_id
+                  AND l.sml_lot_id     = v_lot
+                  AND l.sml_bucket     = ln.svi_bucket
+                  AND l.sml_txn_type   = 'OPENING'
+                  AND l.sml_is_deleted  = false
+                  AND l.sml_is_reversal = false
+                  AND NOT EXISTS (
+                        SELECT 1
+                          FROM stock.stock_ledger r
+                         WHERE r.sml_reverses_id = l.sml_id
+                           AND r.sml_acc_year    = l.sml_acc_year
+                           AND r.sml_is_deleted  = false))
+        THEN
+            RAISE EXCEPTION
+                'this holding already has an OPENING in % (line %/% of %)',
+                p_acc_year, ln.svi_line_no, ln.svi_split_no, v.svh_refno
+                USING ERRCODE = 'unique_violation';
+        END IF;
+
+        -- ── Cost ─────────────────────────────────────────────────────────
+        v_rate     := ln.svi_cost_rate;
+        v_rate_wot := ln.svi_cost_rate_wot;
+
+        IF v_dir = 1 AND COALESCE(v_rate, 0) = 0 THEN
+            -- This is the only thing svh_rate_source is for.
+            v_rate := CASE v.svh_rate_source
+                WHEN 'AVG_COST' THEN
+                    (SELECT sic_avg_cost_rate FROM stock.stock_item_cost
+                      WHERE sic_company_id = v.svh_company_id
+                        AND sic_branch_id  = v.svh_branch_id
+                        AND sic_item_id    = ln.svi_item_id
+                        AND sic_is_deleted = false)
+                WHEN 'LAST_PURCHASE' THEN
+                    (SELECT sic_last_purchase_rate FROM stock.stock_item_cost
+                      WHERE sic_company_id = v.svh_company_id
+                        AND sic_branch_id  = v.svh_branch_id
+                        AND sic_item_id    = ln.svi_item_id
+                        AND sic_is_deleted = false)
+                WHEN 'LOT_COST' THEN
+                    (SELECT slt_cost_rate FROM stock.stock_lot WHERE slt_id = v_lot)
+                WHEN 'MRP' THEN ln.svi_mrp
+                ELSE NULL           -- MANUAL, or none named: the screen meant it
+            END;
+            v_rate := COALESCE(v_rate, 0);
+
+            IF v_rate = 0 AND v_base_qty > 0 THEN
+                RAISE EXCEPTION
+                    'line %/% of voucher % is an inward with no cost rate; set one or set svh_rate_source',
+                    ln.svi_line_no, ln.svi_split_no, v.svh_refno
+                    USING ERRCODE = 'check_violation';
+            END IF;
+        END IF;
+
+        -- Without this, cost_value_wot is zero and every margin report that
+        -- reads it silently reports the whole sale as profit.
+        IF COALESCE(v_rate_wot, 0) = 0 AND COALESCE(v_rate, 0) <> 0 THEN
+            v_rate_wot := CASE
+                WHEN COALESCE(ln.svi_tax_perc, 0) > 0
+                    THEN ROUND(v_rate / (1 + ln.svi_tax_perc / 100.0), 6)
+                ELSE v_rate
+            END;
+        END IF;
+
+        -- ── The ledger row ───────────────────────────────────────────────
+        -- Inserted BEFORE the line write-back, because on an outward left at
+        -- cost 0 the BEFORE trigger fn_sml_cost_default stamps the COGS onto
+        -- the ROW — and RETURNING is the only place that figure exists. The
+        -- write-back below then puts it on the line too, so an issue, a
+        -- damage or a count shortage shows its real cost on the document.
+        INSERT INTO stock.stock_ledger (
+            sml_company_id, sml_branch_id, sml_tenant_id, sml_acc_year,
+            sml_godown_id,
+            sml_item_id, sml_lot_id, sml_uom_id, sml_base_uom_id,
+            sml_to_base_factor,
+            sml_src_module, sml_src_doc_type, sml_src_doc_id,
+            sml_src_acc_year, sml_src_refno, sml_line_no, sml_split_no,
+            sml_txn_type, sml_direction, sml_bucket,
+            sml_doc_date, sml_doc_datetime,
+            sml_qty, sml_base_qty, sml_free_qty, sml_free_base_qty,
+            sml_weight_qty,
+            sml_cost_rate, sml_cost_value, sml_cost_rate_wot, sml_cost_value_wot,
+            sml_landed_rate, sml_landed_value,
+            sml_mrp, sml_batch_no, sml_expiry_date,
+            sml_reason_id, sml_party_id, sml_narration, sml_created_by)
+        VALUES (
+            v.svh_company_id, v.svh_branch_id, v.svh_tenant_id, p_acc_year,
+            ln.svi_godown_id,
+            ln.svi_item_id, v_lot, ln.svi_uom_id, ln.svi_base_uom_id,
+            ln.svi_to_base_factor,
+            'STOCK', 'STOCK_VOUCHER', v.svh_id,
+            v.svh_acc_year, v.svh_refno, ln.svi_line_no, ln.svi_split_no,
+            v_txn, v_dir, ln.svi_bucket,
+            v.svh_doc_date, v.svh_doc_datetime,
+            v_qty, v_base_qty, v_free, v_free_base,
+            ln.svi_weight_qty,
+            COALESCE(v_rate, 0),
+            ROUND(COALESCE(v_rate, 0) * v_total_base, 2),
+            COALESCE(v_rate_wot, 0),
+            ROUND(COALESCE(v_rate_wot, 0) * v_total_base, 2),
+            COALESCE(ln.svi_landed_rate, 0),
+            ROUND(COALESCE(ln.svi_landed_rate, 0) * v_total_base, 2),
+            -- From the LOT, not the line: stock_lot owns these, and
+            -- fn_slt_resolve may legitimately have blanked what was typed.
+            v_lot_mrp, v_lot_batch, v_lot_expiry,
+            v_reason, v_supplier, ln.svi_remarks,
+            COALESCE(p_posted_by, v.svh_created_by))
+        RETURNING sml_cost_rate, sml_cost_rate_wot INTO v_rate, v_rate_wot;
+
+        v_rows := v_rows + 1;
+
+        -- ── Write what actually posted back onto the line ────────────────
+        -- The document must show what the ledger received, not what the
+        -- screen guessed — including the COGS the trigger stamped on an
+        -- outward. Still DRAFT here, so tr_svi_post_lock allows it.
+        UPDATE stock.stock_voucher_item
+           SET svi_lot_id       = v_lot,
+               svi_base_qty     = CASE WHEN v.svh_voucher_type = 'PHYSICAL'
+                                       THEN svi_base_qty ELSE v_base_qty END,
+               svi_free_base_qty= CASE WHEN v.svh_voucher_type = 'PHYSICAL'
+                                       THEN svi_free_base_qty ELSE v_free_base END,
+               svi_cost_rate    = COALESCE(v_rate, 0),
+               svi_cost_rate_wot= COALESCE(v_rate_wot, 0),
+               svi_modified_on  = now(),
+               svi_modified_by  = p_posted_by
+         WHERE svi_id       = ln.svi_id
+           AND svi_acc_year = ln.svi_acc_year;
+    END LOOP;
+
+    -- An empty document is an error. A PHYSICAL count in which every line
+    -- agreed with the book is NOT: the count happened, it moved nothing,
+    -- and the document must still close.
+    IF v_lines = 0 THEN
+        RAISE EXCEPTION 'voucher % has no lines to post', v.svh_refno
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    PERFORM stock.fn_svh_recompute(p_voucher_id, p_acc_year);
+
+    UPDATE stock.stock_voucher
+       SET svh_status    = 'POSTED',
+           svh_posted_on = now(),
+           svh_posted_by = p_posted_by,
+           svh_modified_on = now(),
+           svh_modified_by = p_posted_by
+     WHERE svh_id       = p_voucher_id
+       AND svh_acc_year = p_acc_year;
+
+    RETURN v_rows;
+END $$;
+
+ALTER FUNCTION stock.fn_svh_post(uuid, character(9), uuid) OWNER to postgres;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §3  Two indexes the guards need.
+--
+--  ix_sml_opening is one row per holding that has ever been opened — tiny,
+--  and exactly the shape of the check in fn_svh_post. It is deliberately
+--  NOT unique: the rule it serves has to ignore an opening that was later
+--  reversed, and a partial index predicate cannot see another row. Making it
+--  unique would make fn_svh_cancel a one-way door — cancel an opening and
+--  the holding could never be opened again.
+--
+--  ix_sml_reverses answers "has this row already been undone?", which both
+--  the opening guard and fn_svh_cancel ask.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE INDEX IF NOT EXISTS ix_sml_opening
+    ON stock.stock_ledger USING btree
+    (sml_company_id, sml_branch_id, sml_godown_id, sml_lot_id, sml_bucket)
+    WITH (fillfactor=100, deduplicate_items=True)
+    WHERE sml_txn_type::text = 'OPENING'
+      AND sml_is_deleted  = false
+      AND sml_is_reversal = false;
+
+CREATE INDEX IF NOT EXISTS ix_sml_reverses
+    ON stock.stock_ledger USING btree (sml_reverses_id)
+    WITH (fillfactor=100, deduplicate_items=True)
+    WHERE sml_reverses_id IS NOT NULL AND sml_is_deleted = false;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §4  fn_svh_cancel — undo by writing, never by erasing.
+--
+--  For every ledger row the document posted and that has not already been
+--  undone, write a mirror row: same quantities (they are magnitudes), the
+--  opposite direction, sml_is_reversal = true and sml_reverses_id naming the
+--  row it undoes. Then the voucher is CANCELLED.
+--
+--  Nothing is deleted and nothing is edited — tr_sml_immutable would refuse
+--  both, and the business reason is stronger than the technical one: a stock
+--  figure that can change retrospectively is a stock figure nobody can
+--  reconcile, and in an offline chain the cancellation may arrive after the
+--  day was closed. ux_sml_source excludes reversals, so a reversal never
+--  collides with the row it undoes — and ux_sml_reversal (16) makes the
+--  NOT EXISTS below constraint-backed: this loop is read-then-write, and a
+--  concurrent or replayed cancel would otherwise double-reverse.
+--
+--  ── The reversal carries the ORIGINAL doc_date and acc_year ──────────────
+--  So an as-on-date report reads "this document never moved stock", which is
+--  what cancelling it means. sml_posted_on — always now() — is the audit
+--  trail for when the cancellation actually happened, and it is the column
+--  that tells the two apart. The alternative, dating the reversal today,
+--  leaves stock standing in a closed March that the business has since
+--  disowned, and needs the current year's partition to exist.
+--
+--  ── It can legitimately fail ─────────────────────────────────────────────
+--  Cancelling an opening after stock has been sold from it drives the
+--  holding negative, and fn_sml_apply refuses that under
+--  stp_allow_negative = 'BLOCK'. That is correct. The fix is an adjustment
+--  with a reason, not an unwind of history.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION stock.fn_svh_cancel(
+    p_voucher_id uuid,
+    p_acc_year   character(9),
+    p_reason     character varying DEFAULT NULL,
+    p_by         uuid DEFAULT NULL)
+RETURNS integer
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v      record;
+    o      record;
+    v_rows integer := 0;
+BEGIN
+    SELECT * INTO v
+      FROM stock.stock_voucher
+     WHERE svh_id       = p_voucher_id
+       AND svh_acc_year = p_acc_year
+       FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'stock voucher % / % not found', p_voucher_id, p_acc_year
+            USING ERRCODE = 'no_data_found';
+    END IF;
+
+    IF v.svh_status <> 'POSTED' THEN
+        RAISE EXCEPTION
+            'voucher % is %; only a POSTED voucher can be cancelled',
+            v.svh_refno, v.svh_status
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+
+    FOR o IN
+        SELECT l.*
+          FROM stock.stock_ledger l
+         WHERE l.sml_src_module   = 'STOCK'
+           AND l.sml_src_doc_type = 'STOCK_VOUCHER'
+           AND l.sml_src_doc_id   = p_voucher_id
+           AND l.sml_is_deleted   = false
+           AND l.sml_is_reversal  = false
+           AND NOT EXISTS (
+                 SELECT 1
+                   FROM stock.stock_ledger r
+                  WHERE r.sml_reverses_id = l.sml_id
+                    AND r.sml_acc_year    = l.sml_acc_year
+                    AND r.sml_is_deleted  = false)
+         ORDER BY l.sml_line_no, l.sml_split_no
+    LOOP
+        INSERT INTO stock.stock_ledger (
+            sml_company_id, sml_branch_id, sml_tenant_id, sml_acc_year,
+            sml_godown_id,
+            sml_item_id, sml_lot_id, sml_uom_id, sml_base_uom_id,
+            sml_to_base_factor,
+            sml_src_module, sml_src_doc_type, sml_src_doc_id,
+            sml_src_acc_year, sml_src_refno, sml_line_no, sml_split_no,
+            sml_txn_type, sml_direction, sml_bucket,
+            sml_doc_date, sml_doc_datetime,
+            sml_qty, sml_base_qty, sml_free_qty, sml_free_base_qty,
+            sml_weight_qty,
+            sml_cost_rate, sml_cost_value, sml_cost_rate_wot, sml_cost_value_wot,
+            sml_landed_rate, sml_landed_value,
+            sml_mrp, sml_batch_no, sml_expiry_date,
+            sml_is_reversal, sml_reverses_id,
+            sml_reason_id, sml_party_id, sml_narration, sml_created_by)
+        VALUES (
+            o.sml_company_id, o.sml_branch_id, o.sml_tenant_id, o.sml_acc_year,
+            o.sml_godown_id,
+            o.sml_item_id, o.sml_lot_id, o.sml_uom_id, o.sml_base_uom_id,
+            o.sml_to_base_factor,
+            o.sml_src_module, o.sml_src_doc_type, o.sml_src_doc_id,
+            o.sml_src_acc_year, o.sml_src_refno, o.sml_line_no, o.sml_split_no,
+            o.sml_txn_type, (-o.sml_direction)::smallint, o.sml_bucket,
+            o.sml_doc_date, o.sml_doc_datetime,
+            o.sml_qty, o.sml_base_qty, o.sml_free_qty, o.sml_free_base_qty,
+            o.sml_weight_qty,
+            o.sml_cost_rate, o.sml_cost_value,
+            o.sml_cost_rate_wot, o.sml_cost_value_wot,
+            o.sml_landed_rate, o.sml_landed_value,
+            o.sml_mrp, o.sml_batch_no, o.sml_expiry_date,
+            true, o.sml_id,
+            o.sml_reason_id, o.sml_party_id,
+            COALESCE(p_reason, o.sml_narration), COALESCE(p_by, o.sml_created_by));
+
+        v_rows := v_rows + 1;
+    END LOOP;
+
+    UPDATE stock.stock_voucher
+       SET svh_status       = 'CANCELLED',
+           svh_cancelled_on = now(),
+           svh_cancelled_by = p_by,
+           svh_cancel_reason= p_reason,
+           svh_modified_on  = now(),
+           svh_modified_by  = p_by
+     WHERE svh_id       = p_voucher_id
+       AND svh_acc_year = p_acc_year;
+
+    RETURN v_rows;
+END $$;
+
+ALTER FUNCTION stock.fn_svh_cancel(uuid, character(9), character varying, uuid)
+    OWNER to postgres;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §5  The post-lock. A posted document is history.
+--
+--  stock_ledger has tr_sml_immutable and cannot be edited. Without the same
+--  stance one level up, the document that explains a ledger row can be
+--  rewritten under it: change a line's quantity after posting and the bill
+--  says 10 while the stock says 8, with nothing in either table wrong.
+--
+--  fn_svh_post does its own line UPDATE while the voucher is still DRAFT, so
+--  these triggers never see it.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION stock.fn_svi_post_lock()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_voucher uuid;
+    v_year    character(9);
+    v_status  character varying(20);
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        v_voucher := OLD.svi_voucher_id;
+        v_year    := OLD.svi_acc_year;
+    ELSE
+        v_voucher := NEW.svi_voucher_id;
+        v_year    := NEW.svi_acc_year;
+    END IF;
+
+    SELECT svh_status INTO v_status
+      FROM stock.stock_voucher
+     WHERE svh_id       = v_voucher
+       AND svh_acc_year = v_year;
+
+    IF v_status IN ('POSTED', 'CANCELLED', 'IN_TRANSIT', 'RECEIVED') THEN
+        RAISE EXCEPTION
+            'voucher % is %; its lines cannot be changed (attempted %)',
+            v_voucher, v_status, TG_OP
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END $$;
+
+ALTER FUNCTION stock.fn_svi_post_lock() OWNER to postgres;
+
+DROP TRIGGER IF EXISTS tr_svi_post_lock ON stock.stock_voucher_item;
+CREATE TRIGGER tr_svi_post_lock
+    BEFORE INSERT OR UPDATE OR DELETE ON stock.stock_voucher_item
+    FOR EACH ROW EXECUTE FUNCTION stock.fn_svi_post_lock();
+
+
+CREATE OR REPLACE FUNCTION stock.fn_svh_post_lock()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.svh_status NOT IN ('POSTED', 'CANCELLED') THEN
+        RETURN NEW;
+    END IF;
+
+    -- Totals, audit columns and the sync date stay writable: they are
+    -- derived from lines that can no longer move, and fn_svh_recompute is
+    -- allowed to run as maintenance.
+    IF (NEW.svh_company_id,  NEW.svh_branch_id,     NEW.svh_acc_year,
+        NEW.svh_voucher_type, NEW.svh_device_id,    NEW.svh_slno,
+        NEW.svh_refno,        NEW.svh_doc_date,     NEW.svh_doc_datetime,
+        NEW.svh_from_godown_id, NEW.svh_to_godown_id, NEW.svh_to_branch_id,
+        NEW.svh_supplier_id,  NEW.svh_reason_id,    NEW.svh_rate_source)
+       IS DISTINCT FROM
+       (OLD.svh_company_id,  OLD.svh_branch_id,     OLD.svh_acc_year,
+        OLD.svh_voucher_type, OLD.svh_device_id,    OLD.svh_slno,
+        OLD.svh_refno,        OLD.svh_doc_date,     OLD.svh_doc_datetime,
+        OLD.svh_from_godown_id, OLD.svh_to_godown_id, OLD.svh_to_branch_id,
+        OLD.svh_supplier_id,  OLD.svh_reason_id,    OLD.svh_rate_source)
+    THEN
+        RAISE EXCEPTION
+            'voucher % is %; its content cannot be changed',
+            OLD.svh_refno, OLD.svh_status
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+
+    -- POSTED → CANCELLED is the only move left. Everything else, including
+    -- a quiet return to DRAFT, would orphan the ledger rows.
+    IF NEW.svh_status <> OLD.svh_status
+       AND NOT (OLD.svh_status = 'POSTED' AND NEW.svh_status = 'CANCELLED') THEN
+        RAISE EXCEPTION
+            'voucher % cannot move from % to %',
+            OLD.svh_refno, OLD.svh_status, NEW.svh_status
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+
+    -- Hiding a posted voucher leaves its ledger rows with nothing to
+    -- explain them. Cancel it, then hide it.
+    IF NEW.svh_is_deleted AND NOT OLD.svh_is_deleted
+       AND OLD.svh_status <> 'CANCELLED' THEN
+        RAISE EXCEPTION
+            'voucher % is POSTED; cancel it before deleting it',
+            OLD.svh_refno
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+
+    RETURN NEW;
+END $$;
+
+ALTER FUNCTION stock.fn_svh_post_lock() OWNER to postgres;
+
+DROP TRIGGER IF EXISTS tr_svh_post_lock ON stock.stock_voucher;
+CREATE TRIGGER tr_svh_post_lock
+    BEFORE UPDATE ON stock.stock_voucher
+    FOR EACH ROW EXECUTE FUNCTION stock.fn_svh_post_lock();
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §6  Catalog comments.
+-- ═══════════════════════════════════════════════════════════════════════════
+COMMENT ON FUNCTION stock.fn_svh_txn_map(character varying, uuid, numeric) IS
+    'Maps a voucher type (plus, for ADJUSTMENT and ISSUE, its reason, and for PHYSICAL its counted difference) to the ledger txn_type and the +1/-1 direction. One place, so that fn_svh_post and the pre-post validation query cannot disagree about what a document is going to do. Returns NO ROW for a PHYSICAL line whose count agrees with the book — that is the signal to skip it.';
+
+COMMENT ON FUNCTION stock.fn_svh_post(uuid, character(9), uuid) IS
+    'Turns a DRAFT stock_voucher into stock_ledger rows and flips it to POSTED; returns the row count. Before this function nothing in the chain could bring stock in. Resolves each line''s lot through fn_slt_resolve, applies svh_rate_source to an inward left at cost 0, refuses an inward that still has none, and refuses TRANSFER_* / REPACK_* outright because they need stock_transit. Safe to retry: ux_sml_source makes a second posting of the same line impossible.';
+
+COMMENT ON FUNCTION stock.fn_svh_cancel(uuid, character(9), character varying, uuid) IS
+    'Cancels a POSTED voucher by writing one reversing ledger row per posted row — same magnitudes, opposite direction, sml_reverses_id naming the original — and never by deleting or editing. The reversal carries the original document date, so an as-on-date report reads "this document never moved stock"; sml_posted_on records when the cancellation really happened. It can legitimately fail under stp_allow_negative = BLOCK when the stock has since been sold, and that refusal is correct.';
+
+COMMENT ON FUNCTION stock.fn_svi_post_lock() IS
+    'Refuses any insert, update or delete of a voucher line once the header is POSTED, CANCELLED, IN_TRANSIT or RECEIVED. Without it the document that explains a ledger row can be rewritten under it, leaving a bill saying 10 and stock saying 8 with nothing in either table wrong.';
+
+COMMENT ON FUNCTION stock.fn_svh_post_lock() IS
+    'Freezes a posted or cancelled voucher header: content columns become read-only, POSTED -> CANCELLED is the only status move left, and a posted voucher cannot be soft-deleted until it is cancelled. Totals and audit columns stay writable so fn_svh_recompute can still run.';
+
+COMMENT ON INDEX stock.ix_sml_opening IS
+    'One row per holding that has ever been opened — the index behind the duplicate-opening check in fn_svh_post. Deliberately NOT unique: the rule must ignore an opening that was later reversed, and a partial index predicate cannot see another row; a unique index here would make fn_svh_cancel a one-way door.';
+
+COMMENT ON INDEX stock.ix_sml_reverses IS
+    'Answers "has this ledger row already been undone?" — asked by both the duplicate-opening check and fn_svh_cancel.';

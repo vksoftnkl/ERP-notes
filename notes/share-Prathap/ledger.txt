@@ -1,0 +1,1 @@
+{"success":false,"message":"Validation failed","errors":[{"field":"ledGstRate","message":"property ledGstRate should not exist"},{"field":"ledTaxability","message":"property ledTaxability should not exist"},{"field":"ledTaxRate","message":"property ledTaxRate should not exist"}]}

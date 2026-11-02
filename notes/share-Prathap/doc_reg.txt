@@ -1,0 +1,820 @@
+-- =============================================================================
+-- VK Nex ERP  |  accounts.acc_doc_register  (GST document register)
+--
+-- Structure:
+--   SECTION 1  CREATE TABLE          columns only
+--   SECTION 2  Constraints           one ALTER per constraint
+--   SECTION 3  Partitions
+--   SECTION 4  Indexes
+--   SECTION 5  COMMENT ON            table, columns, constraints, indexes
+--
+-- Status and type columns are varchar with CHECK constraints, not enum types.
+-- The permitted values are in SECTION 2 under "Value sets".
+--
+-- Enum value lists live in SECTION 5 as real database comments, not as inline
+-- SQL comments. A multi-line "--" list inside CREATE TABLE only comments out
+-- its first line; every line after it is parsed as SQL and the script breaks.
+-- COMMENT ON also survives a pg_dump and shows up in pgAdmin and \d+.
+--
+-- Requires PostgreSQL 18 for uuidv7(); on 17 or below use gen_random_uuid().
+-- =============================================================================
+
+
+-- =============================================================================
+-- SECTION 1 : Table
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS accounts.acc_doc_register
+(
+    gdr_id                      uuid NOT NULL DEFAULT uuidv7(),
+    gdr_company_id              uuid NOT NULL,
+    gdr_branch_id               uuid NOT NULL,
+    gdr_tenant_id               uuid,
+    gdr_acc_year                varchar(9) NOT NULL,
+
+    -- classification
+    gdr_source_module           varchar(20) NOT NULL,
+    gdr_tran_nature             varchar(20) NOT NULL,
+    gdr_doc_flow                varchar(10) NOT NULL,
+    gdr_doc_sign                smallint NOT NULL DEFAULT 1,
+
+    -- voucher linkage
+    gdr_voucher_type_id         integer NOT NULL,
+    gdr_voucher_id              uuid NOT NULL,
+    gdr_voucher_no              bigint NOT NULL,
+    gdr_voucher_date            date NOT NULL,
+    gdr_voucher_refno           varchar(50),
+
+    -- document identity
+    gdr_doc_type                varchar(20) NOT NULL,
+    gdr_doc_id                  uuid NOT NULL,
+    gdr_doc_date                date NOT NULL,
+    gdr_doc_ref_no              varchar(50) NOT NULL,
+    gdr_doc_status              varchar(10) NOT NULL DEFAULT 'POSTED',
+    gdr_doc_cancel_reason       varchar(200),
+    gdr_doc_canceled_on         timestamp(6) with time zone,
+    gdr_doc_note_no             varchar(50),
+    gdr_doc_note_date           date,
+    gdr_doc_note_reason         varchar(150),
+
+    -- GST classification
+    gdr_supply_class            varchar(10),
+    gdr_taxability              varchar(10) NOT NULL DEFAULT 'TAXABLE',
+    gdr_supply_nature           varchar(15),
+    gdr_place_of_supply_code    char(2),
+    gdr_place_of_supply_name    varchar(100),
+    gdr_is_reverse_charge       boolean NOT NULL DEFAULT false,
+
+    -- GSP applicability + cached status (detail lives in the child tables)
+    gdr_is_einvoice_applicable  boolean NOT NULL DEFAULT false,
+    gdr_is_ewaybill_applicable  boolean NOT NULL DEFAULT false,
+    gdr_einvoice_status         varchar(20) NOT NULL DEFAULT 'NOT_APPLICABLE',
+    gdr_ewaybill_status         varchar(20) NOT NULL DEFAULT 'NOT_APPLICABLE',
+
+    -- party snapshot
+    gdr_party_type              varchar(15) NOT NULL DEFAULT 'OTHER',
+    gdr_party_id                uuid NOT NULL,
+    gdr_party_name              varchar(200),
+    gdr_party_addr1             varchar(200),
+    gdr_party_addr2             varchar(200),
+    gdr_party_addr3             varchar(200),
+    gdr_party_location          varchar(100),
+    gdr_party_pin               varchar(10),
+    gdr_party_state_code        char(2),
+    gdr_party_state_name        varchar(100),
+    gdr_party_gst_type          varchar(30),
+    gdr_party_gstin             varchar(15),
+    gdr_party_ecom_gstin        varchar(15),
+
+    -- ship-to snapshot
+    gdr_ship_name               varchar(200),
+    gdr_ship_addr1              varchar(200),
+    gdr_ship_addr2              varchar(200),
+    gdr_ship_addr3              varchar(200),
+    gdr_ship_location           varchar(100),
+    gdr_ship_pin                varchar(10),
+    gdr_ship_state_code         char(2),
+    gdr_ship_state_name         varchar(100),
+    gdr_ship_gstin              varchar(15),
+
+    -- dispatch-from snapshot
+    gdr_dispatch_name           varchar(200),
+    gdr_dispatch_addr1          varchar(200),
+    gdr_dispatch_addr2          varchar(200),
+    gdr_dispatch_addr3          varchar(200),
+    gdr_dispatch_location       varchar(100),
+    gdr_dispatch_pin            varchar(10),
+    gdr_dispatch_state_code     char(2),
+    gdr_dispatch_state_name     varchar(100),
+    gdr_dispatch_gstin          varchar(15),
+
+    -- values (always positive; direction is gdr_doc_sign)
+    gdr_gross_value             numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_discount_value          numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_taxable_value           numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_cgst_value              numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_sgst_value              numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_igst_value              numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_cess_value              numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_state_cess_value        numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_tcs_value               numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_other_charge            numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_round_off               numeric(18,2) NOT NULL DEFAULT 0,
+    gdr_bill_value              numeric(18,2) NOT NULL DEFAULT 0,
+
+    -- GSTR-1 filing / amendment
+    gdr_return_period           char(6),
+    gdr_gstr1_filed_on          timestamp(6) with time zone,
+    gdr_is_amendment            boolean NOT NULL DEFAULT false,
+    gdr_orig_doc_no             varchar(50),
+    gdr_orig_doc_date           date,
+    gdr_orig_party_gstin        varchar(15),
+
+    gdr_remarks                 varchar(500),
+    gdr_is_deleted              boolean NOT NULL DEFAULT false,
+    gdr_sync_date               timestamp(6) with time zone,
+    gdr_created_on              timestamp(6) with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gdr_created_by              varchar(100),
+    gdr_updated_on              timestamp(6) with time zone,
+    gdr_updated_by              varchar(100)
+)
+-- No TABLESPACE clause: PostgreSQL rejects an explicit default tablespace on a
+-- partitioned relation. The partitions in SECTION 3 carry it.
+PARTITION BY LIST (gdr_acc_year);
+
+ALTER TABLE IF EXISTS accounts.acc_doc_register OWNER TO postgres;
+
+
+-- =============================================================================
+-- SECTION 2 : Constraints
+-- =============================================================================
+
+-- Composite because the table is partitioned: every unique constraint on a
+-- partitioned table must contain all partition key columns.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT acc_doc_register_pkey PRIMARY KEY (gdr_id, gdr_acc_year);
+
+-- Foreign key target for the child GSP tables' posting gate. Not partial --
+-- a foreign key cannot reference a partial index.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT uq_gdr_posting_state UNIQUE (gdr_id, gdr_acc_year, gdr_doc_status);
+
+-- --- Foreign keys ------------------------------------------------------------
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT fk_gdr_company FOREIGN KEY (gdr_company_id)
+        REFERENCES public.companys (comp_id)
+        ON UPDATE CASCADE ON DELETE RESTRICT;
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT fk_gdr_branch FOREIGN KEY (gdr_branch_id)
+        REFERENCES public.branch_master (br_id)
+        ON UPDATE CASCADE ON DELETE RESTRICT;
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT fk_gdr_party FOREIGN KEY (gdr_party_id)
+        REFERENCES accounts.acc_ledger_master (led_id)
+        ON UPDATE CASCADE ON DELETE RESTRICT;
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT fk_gdr_voucher_type FOREIGN KEY (gdr_voucher_type_id)
+        REFERENCES accounts.acc_voucher_types (vchr_type_id)
+        ON UPDATE CASCADE ON DELETE RESTRICT;
+
+-- No FK on gdr_doc_id: the source document is polymorphic across modules, so
+-- there is no single table to reference. uq_gdr_source_doc is what keeps it
+-- honest.
+
+-- --- Value sets --------------------------------------------------------------
+-- These columns are plain varchar, not enum types. The CHECK constraints below
+-- are the only thing keeping bad values out of the table, so they are not
+-- optional documentation -- they are the domain.
+--
+-- Adding a value later means DROP CONSTRAINT + ADD CONSTRAINT, and on a large
+-- partitioned table that revalidation scans every partition under an ACCESS
+-- EXCLUSIVE lock. Use the two-step form instead, which takes the lock only
+-- briefly and validates without blocking writes:
+--
+--     ALTER TABLE accounts.acc_doc_register
+--         DROP CONSTRAINT chk_gdr_source_module;
+--     ALTER TABLE accounts.acc_doc_register
+--         ADD CONSTRAINT chk_gdr_source_module CHECK (...) NOT VALID;
+--     ALTER TABLE accounts.acc_doc_register
+--         VALIDATE CONSTRAINT chk_gdr_source_module;
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_source_module CHECK (gdr_source_module IN (
+        'SALES','PURCHASE','INVENTORY','ACCOUNTS','SERVICE','JOBWORK','POS','OTHER'));
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_tran_nature CHECK (gdr_tran_nature IN (
+        'SALE','SALES_RETURN','PURCHASE','PURCHASE_RETURN','STOCK_TRANSFER',
+        'DELIVERY_CHALLAN','JOBWORK_SEND','JOBWORK_RECEIVE','DEBIT_NOTE','CREDIT_NOTE',
+        'EXPORT','IMPORT','ADVANCE','ADV_ADJUSTMENT','ADJUSTMENT','OTHER'));
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_doc_flow CHECK (gdr_doc_flow IN (
+        'OUTWARD','INWARD','INTERNAL'));
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_doc_type CHECK (gdr_doc_type IN (
+        'INVOICE','CREDIT_NOTE','DEBIT_NOTE','BILL_OF_SUPPLY','DELIVERY_CHALLAN',
+        'CHALLAN','ADVANCE','ADV_ADJUSTMENT','EXPORT_DOC','IMPORT_DOC','OTHER'));
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_doc_status CHECK (gdr_doc_status IN (
+        'DRAFT','POSTED','CANCELED','ARCHIVED'));
+
+-- Nullable: the class is unknown until the line items are summarised.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_supply_class CHECK (
+        gdr_supply_class IS NULL OR gdr_supply_class IN ('GOODS','SERVICES','MIXED'));
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_taxability CHECK (gdr_taxability IN (
+        'TAXABLE','EXEMPT','NIL_RATED','NON_GST','MIXED'));
+
+-- Nullable for internal documents with no supply.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_supply_nature CHECK (
+        gdr_supply_nature IS NULL OR gdr_supply_nature IN (
+        'INTRA_STATE','INTER_STATE','IMPORT','EXPORT','SEZ','OTHER'));
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_party_type CHECK (gdr_party_type IN (
+        'CUSTOMER','VENDOR','BRANCH','JOBWORKER','TRANSPORTER','OTHER'));
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_einvoice_status CHECK (gdr_einvoice_status IN (
+        'NOT_APPLICABLE','PENDING','GENERATED','FAILED','CANCELED','EXPIRED'));
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_ewaybill_status CHECK (gdr_ewaybill_status IN (
+        'NOT_APPLICABLE','PENDING','GENERATED','FAILED','CANCELED','EXPIRED'));
+
+
+-- --- Domain checks -----------------------------------------------------------
+
+-- +1 adds to the party's account, -1 reverses it. Amounts are always stored
+-- positive so that reports never carry sign logic of their own.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_doc_sign CHECK (gdr_doc_sign IN (1, -1));
+
+-- Partition key format. A malformed value would silently land in the DEFAULT
+-- partition and never be found by a year-scoped query.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_acc_year_fmt
+        CHECK (gdr_acc_year ~ '^[0-9]{4}-[0-9]{4}$');
+
+-- gdr_round_off is deliberately excluded: rounding can legitimately be negative.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_amounts CHECK (
+        gdr_gross_value      >= 0 AND gdr_discount_value   >= 0 AND
+        gdr_taxable_value    >= 0 AND gdr_cgst_value       >= 0 AND
+        gdr_sgst_value       >= 0 AND gdr_igst_value       >= 0 AND
+        gdr_cess_value       >= 0 AND gdr_state_cess_value >= 0 AND
+        gdr_tcs_value        >= 0 AND gdr_other_charge     >= 0 AND
+        gdr_bill_value       >= 0);
+
+-- --- GSTIN format ------------------------------------------------------------
+-- 2-digit state code, 5 letters (PAN), 4 digits, 1 letter, entity number,
+-- literal 'Z', checksum character. Catching this here means a malformed GSTIN
+-- fails at data entry instead of at the e-invoice API call.
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_party_gstin_fmt CHECK (
+        gdr_party_gstin IS NULL
+        OR gdr_party_gstin ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$');
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_party_ecom_gstin_fmt CHECK (
+        gdr_party_ecom_gstin IS NULL
+        OR gdr_party_ecom_gstin ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$');
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_ship_gstin_fmt CHECK (
+        gdr_ship_gstin IS NULL
+        OR gdr_ship_gstin ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$');
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_dispatch_gstin_fmt CHECK (
+        gdr_dispatch_gstin IS NULL
+        OR gdr_dispatch_gstin ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$');
+
+-- A GSTIN's first two characters are its state code. A mismatch means the
+-- snapshot was assembled from two different parties.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_party_state_matches_gstin CHECK (
+        gdr_party_gstin IS NULL OR gdr_party_state_code IS NULL
+        OR left(gdr_party_gstin, 2) = gdr_party_state_code);
+
+-- --- Lifecycle ---------------------------------------------------------------
+
+-- A canceled document must record when. Required for the 24-hour NIC
+-- cancellation window and for any later audit.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_doc_cancel_date CHECK (
+        gdr_doc_status <> 'CANCELED' OR gdr_doc_canceled_on IS NOT NULL);
+
+-- Credit/debit note number and date travel together or not at all.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_note_pair CHECK (
+        (gdr_doc_note_no IS NULL     AND gdr_doc_note_date IS NULL)
+        OR (gdr_doc_note_no IS NOT NULL AND gdr_doc_note_date IS NOT NULL));
+
+-- MMYYYY as GSTN expects it, e.g. 072026 for July 2026.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_return_period_fmt CHECK (
+        gdr_return_period IS NULL
+        OR gdr_return_period ~ '^(0[1-9]|1[0-2])[0-9]{4}$');
+
+-- A B2BA / CDNRA amendment is rejected by GSTN without the original document
+-- number and date, so refuse to store one that lacks them.
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_amendment_pair CHECK (
+        gdr_is_amendment = false
+        OR (gdr_orig_doc_no IS NOT NULL AND gdr_orig_doc_date IS NOT NULL));
+
+-- The cached status may only leave NOT_APPLICABLE where the document actually
+-- requires that GSP document. Stops a B2C cash bill from showing "IRN pending".
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_einvoice_status_applicable CHECK (
+        gdr_is_einvoice_applicable = true OR gdr_einvoice_status = 'NOT_APPLICABLE');
+
+ALTER TABLE accounts.acc_doc_register
+    ADD CONSTRAINT chk_gdr_ewaybill_status_applicable CHECK (
+        gdr_is_ewaybill_applicable = true OR gdr_ewaybill_status = 'NOT_APPLICABLE');
+
+
+-- =============================================================================
+-- SECTION 3 : Partitions
+--
+-- Create the next two years every February via pg_cron. The DEFAULT partition
+-- is a safety net only: once it holds rows, attaching a new partition needs a
+-- full scan and a lock on it. Alert if its row count ever leaves zero.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS accounts.acc_doc_register_2025_2026
+    PARTITION OF accounts.acc_doc_register
+    FOR VALUES IN ('2025-2026') TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS accounts.acc_doc_register_2026_2027
+    PARTITION OF accounts.acc_doc_register
+    FOR VALUES IN ('2026-2027') TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS accounts.acc_doc_register_2027_2028
+    PARTITION OF accounts.acc_doc_register
+    FOR VALUES IN ('2027-2028') TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS accounts.acc_doc_register_default
+    PARTITION OF accounts.acc_doc_register DEFAULT TABLESPACE pg_default;
+
+
+-- =============================================================================
+-- SECTION 4 : Indexes
+--
+-- No TABLESPACE clause on any of these either -- same partitioned-relation
+-- restriction as the table itself.
+-- =============================================================================
+
+-- One document number per voucher series per financial year. The document date
+-- is NOT part of the key: the same number on two dates must collide, not
+-- coexist.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gdr_doc_no
+    ON accounts.acc_doc_register USING btree
+    (gdr_company_id, gdr_voucher_type_id, gdr_acc_year, gdr_doc_ref_no)
+    WITH (fillfactor = 100)
+    WHERE gdr_is_deleted = false;
+
+-- One register row per source document. gdr_acc_year is present only because
+-- the table is partitioned; the cost is that cross-year duplicate registration
+-- of one source document is no longer blocked here. Guard it in the posting
+-- service.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gdr_source_doc
+    ON accounts.acc_doc_register USING btree
+    (gdr_source_module, gdr_doc_id, gdr_acc_year)
+    WITH (fillfactor = 100)
+    WHERE gdr_is_deleted = false;
+
+-- Day book and GST registers: everything is scoped to branch and date range.
+CREATE INDEX IF NOT EXISTS idx_gdr_branch_doc_date
+    ON accounts.acc_doc_register USING btree
+    (gdr_company_id, gdr_branch_id, gdr_acc_year, gdr_doc_date)
+    WITH (fillfactor = 100)
+    WHERE gdr_is_deleted = false;
+
+-- Same shape, but for reports that run on voucher date rather than document
+-- date. The two diverge on back-dated entries.
+CREATE INDEX IF NOT EXISTS idx_gdr_branch_voucher_date
+    ON accounts.acc_doc_register USING btree
+    (gdr_company_id, gdr_branch_id, gdr_acc_year, gdr_voucher_date)
+    WITH (fillfactor = 100)
+    WHERE gdr_is_deleted = false;
+
+-- Slices by transaction type: outward supplies, purchase returns, job work.
+CREATE INDEX IF NOT EXISTS idx_gdr_doc_class
+    ON accounts.acc_doc_register USING btree
+    (gdr_source_module, gdr_tran_nature, gdr_doc_flow, gdr_doc_type)
+    WITH (fillfactor = 100)
+    WHERE gdr_is_deleted = false;
+
+-- gdr_doc_status is mutable, so this one keeps the default fillfactor to
+-- absorb page splits on status transitions.
+CREATE INDEX IF NOT EXISTS idx_gdr_doc_status
+    ON accounts.acc_doc_register USING btree (gdr_doc_status)
+    WHERE gdr_is_deleted = false;
+
+-- GSP retry worker queue: documents whose IRN never came through.
+CREATE INDEX IF NOT EXISTS idx_gdr_einvoice_pending
+    ON accounts.acc_doc_register USING btree
+    (gdr_company_id, gdr_branch_id, gdr_doc_date)
+    WHERE gdr_is_deleted = false
+      AND gdr_einvoice_status IN ('PENDING','FAILED');
+
+-- Same for e-way bills.
+CREATE INDEX IF NOT EXISTS idx_gdr_ewaybill_pending
+    ON accounts.acc_doc_register USING btree
+    (gdr_company_id, gdr_branch_id, gdr_doc_date)
+    WHERE gdr_is_deleted = false
+      AND gdr_ewaybill_status IN ('PENDING','FAILED');
+
+-- GSTR-1 build: unfiled documents for a return period.
+CREATE INDEX IF NOT EXISTS idx_gdr_return_period
+    ON accounts.acc_doc_register USING btree
+    (gdr_company_id, gdr_branch_id, gdr_return_period)
+    WHERE gdr_is_deleted = false
+      AND gdr_gstr1_filed_on IS NULL;
+
+
+-- =============================================================================
+-- SECTION 5 : Comments
+--
+-- These are stored in the database. pg_dump carries them, pgAdmin shows them
+-- in the column grid, and psql prints them with \d+.
+-- =============================================================================
+
+COMMENT ON TABLE accounts.acc_doc_register IS
+'GST document register: one row per source document from any module. Write-once after posting and read-heavy -- this is the single source for GSTR-1, GST registers and document-level MIS. Party, ship-to and dispatch blocks are denormalized snapshots so a filed return reflects the addresses and GSTINs as they stood on the document date, not as the masters read today. LIST-partitioned on gdr_acc_year.';
+
+-- --- Identity and ownership --------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_id IS 'Surrogate key. uuidv7, so insertion order is roughly index order.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_company_id IS 'Owning company. FK public.companys.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_branch_id IS 'Issuing branch. FK public.branch_master.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_tenant_id IS 'Tenant this row belongs to. Nullable for single-tenant deployments.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_acc_year IS 'Financial year as YYYY-YYYY, e.g. 2026-2027. Partition key -- queries without it scan every partition.';
+
+-- --- Classification ----------------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_source_module IS 'Module that produced the document. SALES, PURCHASE, INVENTORY, ACCOUNTS, SERVICE, JOBWORK, POS, OTHER.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_tran_nature IS 'Business nature of the transaction. SALE, SALES_RETURN, PURCHASE, PURCHASE_RETURN, STOCK_TRANSFER, DELIVERY_CHALLAN, JOBWORK_SEND, JOBWORK_RECEIVE, DEBIT_NOTE, CREDIT_NOTE, EXPORT, IMPORT, ADVANCE, ADV_ADJUSTMENT, ADJUSTMENT, OTHER.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_flow IS 'Direction of the supply. OUTWARD, INWARD, INTERNAL.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_sign IS '+1 or -1. All amounts are stored positive; this carries the direction so reports can sum without sign logic.';
+
+-- --- Voucher linkage ---------------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_voucher_type_id IS 'Voucher series. FK accounts.acc_voucher_types. Part of the document number uniqueness key.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_voucher_id IS 'Accounting voucher this document posted to, in accounts.acc_voucher_header.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_voucher_no IS 'Running voucher number within the series and financial year.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_voucher_date IS 'Accounting date. Diverges from gdr_doc_date on back-dated entries.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_voucher_refno IS 'Free-text reference on the voucher. Not a document number.';
+
+-- --- Document identity -------------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_type IS 'GST document type. INVOICE, CREDIT_NOTE, DEBIT_NOTE, BILL_OF_SUPPLY, DELIVERY_CHALLAN, CHALLAN, ADVANCE, ADV_ADJUSTMENT, EXPORT_DOC, IMPORT_DOC, OTHER.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_id IS 'Primary key of the row in the source module table. Polymorphic -- interpret it with gdr_source_module. No FK is possible; uq_gdr_source_doc enforces one register row per source document.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_date IS 'Date printed on the document. This is the date GSTR-1 reports.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_ref_no IS 'The document number as printed and as filed, e.g. INV/2026/0042. Unique per company, voucher series and financial year.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_status IS 'DRAFT, POSTED, CANCELED, ARCHIVED. Only POSTED documents can acquire an IRN or an e-way bill -- enforced by the composite FK on the child tables.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_cancel_reason IS 'Free-text reason recorded at cancellation.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_canceled_on IS 'Cancellation timestamp. Mandatory once status is CANCELED.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_note_no IS 'Credit/debit note number, where this document is a note against an earlier invoice.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_note_date IS 'Credit/debit note date. Travels with gdr_doc_note_no.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_doc_note_reason IS 'Reason the note was raised.';
+
+-- --- GST classification ------------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_supply_class IS 'GOODS, SERVICES, MIXED.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_taxability IS 'TAXABLE, EXEMPT, NIL_RATED, NON_GST, MIXED. MIXED means the line items differ; the rate-wise split lives in the tax detail.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_supply_nature IS 'INTRA_STATE, INTER_STATE, IMPORT, EXPORT, SEZ, OTHER. Decides CGST+SGST versus IGST.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_place_of_supply_code IS 'Two-digit GST state code of the place of supply. Kept as char(2) so leading zeros survive, e.g. 07 for Delhi.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_place_of_supply_name IS 'State name matching the place of supply code, snapshotted for printing.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_is_reverse_charge IS 'True where tax is payable by the recipient under RCM.';
+
+-- --- GSP status --------------------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_is_einvoice_applicable IS 'Whether this document needs an IRN. Decided at posting from turnover and party type.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_is_ewaybill_applicable IS 'Whether this document needs an e-way bill, typically value and movement driven.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_einvoice_status IS 'Cached from accounts.acc_einvoice_register. NOT_APPLICABLE, PENDING, GENERATED, FAILED, CANCELED, EXPIRED. Update it in the same transaction as the child row.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_ewaybill_status IS 'Cached from accounts.acc_ewaybill_register. Same value set. EXPIRED is never returned by NIC -- a scheduled job must set it once validity lapses.';
+
+-- --- Party snapshot ----------------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_party_type IS 'CUSTOMER, VENDOR, BRANCH, JOBWORKER, TRANSPORTER, OTHER.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_party_id IS 'Ledger of the counterparty. FK accounts.acc_ledger_master. The columns below are a snapshot, not a live join.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_party_gst_type IS 'Registration type at document date: regular, composition, unregistered, SEZ, UIN.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_party_gstin IS 'Counterparty GSTIN as it stood on the document date. Format-checked; first two characters must match gdr_party_state_code.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_party_ecom_gstin IS 'GSTIN of the e-commerce operator, where the supply was made through one.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_ship_gstin IS 'Ship-to GSTIN. Differs from the party GSTIN under bill-to-ship-to.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_dispatch_gstin IS 'Dispatch-from GSTIN, where goods move from a location other than the billing branch.';
+
+-- --- Values ------------------------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_taxable_value IS 'Assessable value after discount, before tax. Header total only -- the rate-wise split belongs in the tax detail table.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_tcs_value IS 'Tax collected at source under section 206C, where applicable.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_round_off IS 'Rounding adjustment. The only value column allowed to be negative.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_bill_value IS 'Final payable on the document, after tax, charges and rounding.';
+
+-- --- Filing ------------------------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_return_period IS 'GSTR-1 return period as MMYYYY, e.g. 072026. Usually derived from gdr_doc_date but set explicitly so late documents can be filed in a later period.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_gstr1_filed_on IS 'When this document was included in a filed GSTR-1. NULL means unfiled.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_is_amendment IS 'True for a B2BA or CDNRA amendment of an already-filed document.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_orig_doc_no IS 'Document number being amended. Mandatory when gdr_is_amendment is true.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_orig_doc_date IS 'Date of the document being amended.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_orig_party_gstin IS 'Counterparty GSTIN as originally filed. Set where the amendment is a GSTIN correction.';
+
+-- --- Housekeeping ------------------------------------------------------------
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_is_deleted IS 'Soft delete. Every partial index excludes deleted rows.';
+COMMENT ON COLUMN accounts.acc_doc_register.gdr_sync_date IS 'Last push to the central server for branch replication.';
+
+-- --- Constraints -------------------------------------------------------------
+COMMENT ON CONSTRAINT uq_gdr_posting_state ON accounts.acc_doc_register IS
+'FK target for the posting gate. The child GSP tables carry a status column defaulted to POSTED and reference this key, so a draft document cannot acquire an IRN or an e-way bill. Not partial -- a foreign key cannot reference a partial index.';
+
+COMMENT ON CONSTRAINT chk_gdr_doc_sign ON accounts.acc_doc_register IS
+'Direction marker. Amounts are stored positive; this is what makes a credit note net correctly.';
+
+COMMENT ON CONSTRAINT chk_gdr_acc_year_fmt ON accounts.acc_doc_register IS
+'Partition key format. A malformed value lands in the DEFAULT partition and is invisible to year-scoped queries.';
+
+COMMENT ON CONSTRAINT chk_gdr_amounts ON accounts.acc_doc_register IS
+'All value columns non-negative except gdr_round_off, which can legitimately be negative.';
+
+COMMENT ON CONSTRAINT chk_gdr_party_state_matches_gstin ON accounts.acc_doc_register IS
+'A GSTIN begins with its state code. A mismatch means the party snapshot was assembled from two different sources.';
+
+COMMENT ON CONSTRAINT chk_gdr_amendment_pair ON accounts.acc_doc_register IS
+'GSTN rejects a B2BA or CDNRA without the original document number and date.';
+
+COMMENT ON CONSTRAINT chk_gdr_einvoice_status_applicable ON accounts.acc_doc_register IS
+'The cached status may only leave NOT_APPLICABLE where an IRN is actually required.';
+
+COMMENT ON CONSTRAINT chk_gdr_ewaybill_status_applicable ON accounts.acc_doc_register IS
+'The cached status may only leave NOT_APPLICABLE where an e-way bill is actually required.';
+
+-- --- Indexes -----------------------------------------------------------------
+COMMENT ON INDEX accounts.uq_gdr_doc_no IS
+'Document number uniqueness per company, voucher series and financial year. Note the branch is NOT in this key: two branches cannot reuse the same number in one series. If branches are meant to run independent series, add gdr_branch_id here.';
+
+COMMENT ON INDEX accounts.uq_gdr_source_doc IS
+'One register row per source document. gdr_acc_year is present only to satisfy the partitioned-table rule.';
+
+COMMENT ON INDEX accounts.idx_gdr_return_period IS
+'Drives the GSTR-1 build: unfiled documents for a return period.';
+
+
+
+
+
+-- =============================================================================
+-- VK Nex ERP  |  accounts.acc_doc_einvoice  (e-invoice / IRN register)
+--
+--   SECTION 1  CREATE TABLE      columns only
+--   SECTION 2  Constraints       one ALTER per constraint
+--   SECTION 3  Indexes
+--   SECTION 4  Deferred          verify before enabling
+--   SECTION 5  COMMENT ON        table, columns, constraints, indexes
+--
+-- Depends on accounts.acc_doc_register, including its uq_gdr_posting_state
+-- unique constraint. Run the register script first.
+--
+-- No enum types: status columns are varchar with CHECK constraints.
+-- Requires PostgreSQL 18 for uuidv7(); on 17 or below use gen_random_uuid().
+--
+-- One row per document that needs an IRN. Strictly 1:1 -- a canceled IRN cannot
+-- be regenerated against the same document number, since NIC rejects it as a
+-- duplicate. A canceled e-invoice needs a fresh document, not a second row.
+-- Retries UPDATE this row; raw GSP request/response payloads belong in a
+-- separate append-only API log.
+-- =============================================================================
+
+
+-- =============================================================================
+-- SECTION 1 : Table
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS accounts.acc_doc_einvoice
+(
+    ein_id                  uuid NOT NULL DEFAULT uuidv7(),
+    ein_gdr_id              uuid NOT NULL,
+    ein_company_id          uuid NOT NULL,
+    ein_branch_id           uuid NOT NULL,
+    ein_tenant_id           uuid,
+    ein_acc_year            varchar(9) NOT NULL,
+
+    -- posting gate: pinned to POSTED by default, never set by the application
+    ein_doc_status          varchar(10) NOT NULL DEFAULT 'POSTED',
+
+    -- credentials can rotate between documents
+    ein_gsp_provider_id     uuid,
+
+    ein_status              varchar(20) NOT NULL DEFAULT 'PENDING',
+
+    -- NIC response
+    ein_irn                 char(64),
+    ein_ack_no              varchar(20),
+    ein_ack_date            timestamp(6) with time zone,
+    ein_signed_qr           text,
+    ein_signed_invoice      text,
+
+    -- retry tracking
+    ein_attempt_count       smallint NOT NULL DEFAULT 0,
+    ein_last_attempt_on     timestamp(6) with time zone,
+    ein_last_error_code     varchar(10),
+    ein_last_error_msg      varchar(500),
+
+    -- cancellation (NIC window: 24 hours from ack)
+    ein_canceled_on         timestamp(6) with time zone,
+    ein_cancel_reason_code  char(1),
+    ein_cancel_remarks      varchar(100),
+
+    ein_is_deleted          boolean NOT NULL DEFAULT false,
+    ein_created_on          timestamp(6) with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ein_created_by          varchar(100),
+    ein_updated_on          timestamp(6) with time zone,
+    ein_updated_by          varchar(100)
+)
+TABLESPACE pg_default;
+
+ALTER TABLE IF EXISTS accounts.acc_doc_einvoice OWNER TO postgres;
+
+
+-- =============================================================================
+-- SECTION 2 : Constraints
+-- =============================================================================
+
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT acc_doc_einvoice_pkey PRIMARY KEY (ein_id);
+
+-- --- Foreign keys ------------------------------------------------------------
+
+-- The posting gate. ein_doc_status defaults to POSTED, so this key can only
+-- resolve against a parent row whose status is POSTED -- a draft document
+-- cannot acquire an IRN, and the database refuses it rather than trusting the
+-- service layer to remember.
+--
+-- This also stands in for a plain (ein_gdr_id, ein_acc_year) foreign key: a row
+-- here cannot exist without its parent either way, so a second FK would only
+-- add a redundant lookup on every insert.
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT fk_ein_posted_doc
+        FOREIGN KEY (ein_gdr_id, ein_acc_year, ein_doc_status)
+        REFERENCES accounts.acc_doc_register (gdr_id, gdr_acc_year, gdr_doc_status)
+        ON UPDATE CASCADE ON DELETE RESTRICT;
+
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT fk_ein_company FOREIGN KEY (ein_company_id)
+        REFERENCES public.companys (comp_id)
+        ON UPDATE CASCADE ON DELETE RESTRICT;
+
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT fk_ein_branch FOREIGN KEY (ein_branch_id)
+        REFERENCES public.branch_master (br_id)
+        ON UPDATE CASCADE ON DELETE RESTRICT;
+
+-- --- Value sets --------------------------------------------------------------
+
+-- No NOT_APPLICABLE: a row exists here only where an IRN is required, so that
+-- state has no meaning. No EXPIRED either -- an IRN does not expire; only an
+-- e-way bill does.
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT chk_ein_status CHECK (ein_status IN (
+        'PENDING','GENERATED','FAILED','CANCELED'));
+
+-- Mirrors gdr_doc_status. Only POSTED is reachable in practice on insert; the
+-- other values arrive through ON UPDATE CASCADE when the parent changes.
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT chk_ein_doc_status CHECK (ein_doc_status IN (
+        'DRAFT','POSTED','CANCELED','ARCHIVED'));
+
+-- --- Payload integrity -------------------------------------------------------
+
+-- IRN is a 64-character lowercase SHA-256 hex digest.
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT chk_ein_irn_fmt CHECK (
+        ein_irn IS NULL OR ein_irn ~ '^[0-9a-f]{64}$');
+
+-- A GENERATED row without the full acknowledgement means the response was
+-- parsed wrongly. Fail here rather than print an invoice with no QR code.
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT chk_ein_generated_payload CHECK (
+        ein_status <> 'GENERATED'
+        OR (ein_irn IS NOT NULL AND ein_ack_no IS NOT NULL AND ein_ack_date IS NOT NULL));
+
+-- Cancellation must record when and why: both are needed to defend the
+-- cancellation later, and the 24-hour NIC window is computed from the ack.
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT chk_ein_canceled_payload CHECK (
+        ein_status <> 'CANCELED'
+        OR (ein_canceled_on IS NOT NULL AND ein_cancel_reason_code IS NOT NULL));
+
+-- NIC cancel reasons: 1=Duplicate 2=Data entry mistake 3=Order canceled 4=Others
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT chk_ein_cancel_reason CHECK (
+        ein_cancel_reason_code IS NULL OR ein_cancel_reason_code IN ('1','2','3','4'));
+
+ALTER TABLE accounts.acc_doc_einvoice
+    ADD CONSTRAINT chk_ein_attempt_count CHECK (ein_attempt_count >= 0);
+
+
+-- =============================================================================
+-- SECTION 3 : Indexes
+-- =============================================================================
+
+-- One e-invoice row per document, ever. Not partial: even a canceled IRN blocks
+-- a second attempt, because NIC will not issue a new IRN for the same document
+-- number.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ein_doc
+    ON accounts.acc_doc_einvoice USING btree (ein_gdr_id)
+    WITH (fillfactor = 100) TABLESPACE pg_default;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ein_irn
+    ON accounts.acc_doc_einvoice USING btree (ein_irn)
+    WITH (fillfactor = 100) TABLESPACE pg_default
+    WHERE ein_irn IS NOT NULL;
+
+-- Retry worker queue: oldest failures first. Default fillfactor, because
+-- ein_last_attempt_on is rewritten on every attempt.
+CREATE INDEX IF NOT EXISTS idx_ein_retry_queue
+    ON accounts.acc_doc_einvoice USING btree
+    (ein_company_id, ein_branch_id, ein_last_attempt_on)
+    TABLESPACE pg_default
+    WHERE ein_is_deleted = false AND ein_status IN ('PENDING','FAILED');
+
+-- Reconciling filed IRNs against GSTR-1 for a period.
+CREATE INDEX IF NOT EXISTS idx_ein_ack_period
+    ON accounts.acc_doc_einvoice USING btree
+    (ein_company_id, ein_branch_id, ein_acc_year, ein_ack_date)
+    WITH (fillfactor = 100) TABLESPACE pg_default
+    WHERE ein_is_deleted = false AND ein_status = 'GENERATED';
+
+
+-- =============================================================================
+-- SECTION 4 : Deferred -- verify before enabling
+-- =============================================================================
+
+-- Confirm the primary key column name on fixed.gsp_provider_master, then enable:
+--
+-- ALTER TABLE accounts.acc_doc_einvoice
+--     ADD CONSTRAINT fk_ein_gsp_provider FOREIGN KEY (ein_gsp_provider_id)
+--     REFERENCES fixed.gsp_provider_master (gsp_id)
+--     ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+-- =============================================================================
+-- SECTION 5 : Comments
+-- =============================================================================
+
+COMMENT ON TABLE accounts.acc_doc_einvoice IS
+'E-invoice (IRN) register: one row per document requiring an IRN, 1:1 with accounts.acc_doc_register. Holds the NIC acknowledgement and the GSP retry state. Kept out of the document register because this is a mutable state machine -- retries would otherwise churn a wide, heavily indexed, read-heavy row. Raw GSP request/response payloads do not belong here; every retry has a different payload, so they go in a separate append-only API log.';
+
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_id IS 'Surrogate key. uuidv7, so insertion order is roughly index order.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_gdr_id IS 'Document this IRN belongs to, in accounts.acc_doc_register. Unique -- one e-invoice row per document, ever.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_company_id IS 'Owning company. Denormalized from the register so the retry queue indexes do not need a join.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_branch_id IS 'Issuing branch. Denormalized for the same reason.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_tenant_id IS 'Tenant this row belongs to. Nullable for single-tenant deployments.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_acc_year IS 'Financial year as YYYY-YYYY. Part of the foreign key because the register is partitioned on it.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_doc_status IS 'Copy of the parent document status, pinned to POSTED by its default. This is the posting gate -- do NOT expose it in the insert DTO or a caller could set DRAFT and bypass the check. Other values arrive only through ON UPDATE CASCADE.';
+
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_gsp_provider_id IS 'GSP that handled this document. Recorded per row because credentials and providers can change between documents.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_status IS 'PENDING, GENERATED, FAILED, CANCELED. No NOT_APPLICABLE -- a row exists only where an IRN is required. No EXPIRED -- an IRN does not expire, unlike an e-way bill.';
+
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_irn IS 'Invoice Reference Number: 64-character lowercase SHA-256 hex digest returned by NIC.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_ack_no IS 'NIC acknowledgement number for the IRN.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_ack_date IS 'NIC acknowledgement timestamp. The 24-hour cancellation window runs from here.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_signed_qr IS 'Signed QR payload from NIC, printed on the invoice. Large -- one reason this table is separate from the register.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_signed_invoice IS 'Signed invoice JSON returned by NIC. Retain for audit.';
+
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_attempt_count IS 'Number of generation attempts. Use it to stop retrying and raise an alert instead of looping.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_last_attempt_on IS 'Timestamp of the last attempt. Drives the retry queue ordering.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_last_error_code IS 'Last NIC or GSP error code, e.g. 2150 for a duplicate IRN.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_last_error_msg IS 'Last error message, truncated. The full exchange belongs in the API log.';
+
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_canceled_on IS 'When the IRN was canceled with NIC. Mandatory once status is CANCELED.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_cancel_reason_code IS 'NIC cancel reason: 1 duplicate, 2 data entry mistake, 3 order canceled, 4 others.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_cancel_remarks IS 'Free-text remarks sent with the cancellation.';
+COMMENT ON COLUMN accounts.acc_doc_einvoice.ein_is_deleted IS 'Soft delete. The retry and reconciliation indexes exclude deleted rows.';
+
+COMMENT ON CONSTRAINT fk_ein_posted_doc ON accounts.acc_doc_einvoice IS
+'Posting gate. ein_doc_status defaults to POSTED, so this key resolves only against a POSTED parent -- a draft document cannot acquire an IRN. Also stands in for a plain document foreign key, so no second FK is needed.';
+
+COMMENT ON CONSTRAINT chk_ein_status ON accounts.acc_doc_einvoice IS
+'PENDING, GENERATED, FAILED, CANCELED only. NOT_APPLICABLE and EXPIRED are deliberately absent -- neither is reachable for an IRN.';
+
+COMMENT ON CONSTRAINT chk_ein_generated_payload ON accounts.acc_doc_einvoice IS
+'A GENERATED row must carry IRN, acknowledgement number and acknowledgement date. Catches a misparsed NIC response before an invoice prints without a QR code.';
+
+COMMENT ON CONSTRAINT chk_ein_canceled_payload ON accounts.acc_doc_einvoice IS
+'A CANCELED row must record when and why.';
+
+COMMENT ON INDEX accounts.uq_ein_doc IS
+'One e-invoice row per document, ever. Not partial: a canceled IRN still blocks a retry, because NIC will not issue a second IRN for the same document number. A canceled e-invoice needs a fresh document.';
+
+COMMENT ON INDEX accounts.idx_ein_retry_queue IS
+'Retry worker queue: PENDING and FAILED rows, oldest attempt first.';
+
+
+
+

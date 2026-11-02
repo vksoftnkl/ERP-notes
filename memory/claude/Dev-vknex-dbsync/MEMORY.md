@@ -1,0 +1,2 @@
+- [Linux service install](linux-service-install.md) — redeploy with install.sh erp-vps or the tunnel unit is removed; status page on 127.0.0.1:7645
+- [Sandbox testing](sandbox-testing.md) — test sync changes on a private PG instance + 580 ms latency proxy; ERP reads and live runs are off-limits
